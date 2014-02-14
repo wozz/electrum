@@ -29,6 +29,7 @@ import random
 import aes
 import Queue
 import time
+import math
 
 from util import print_msg, print_error, format_satoshis
 from bitcoin import *
@@ -307,14 +308,11 @@ class Wallet:
             self.seed_version = 4
             return
 
-        #if not seed:
-        #    self.seed = self.make_seed()
-        #    self.seed_version = SEED_VERSION
-        #    return
-
-        # find out what kind of wallet we are
+        # check if seed is hexadecimal
+        seed = seed.strip()
         try:
-            seed.strip().decode('hex')
+            assert seed
+            seed.decode('hex')
             self.seed_version = 4
             self.seed = str(seed)
             return
@@ -324,20 +322,10 @@ class Wallet:
         words = seed.split()
         self.seed_version = 4
         self.seed = mnemonic.mn_decode(words)
+
+        if not self.seed:
+            raise Exception("Invalid seed")
         
-        #try:
-        #    mnemonic.mn_decode(words)
-        #    uses_electrum_words = True
-        #except Exception:
-        #    uses_electrum_words = False
-        #
-        #if uses_electrum_words and len(words) != 13:
-        #    self.seed_version = 4
-        #    self.seed = mnemonic.mn_decode(words)
-        #else:
-        #    assert mnemonic_hash(seed).startswith(SEED_PREFIX)
-        #    self.seed_version = SEED_VERSION
-        #    self.seed = seed
             
 
     def save_seed(self, password):
@@ -1186,9 +1174,8 @@ class Wallet:
             self.storage.put('fee_per_kb', self.fee, True)
         
     def estimated_fee(self, inputs):
-        estimated_size =  len(inputs) * 180 + 80     # this assumes non-compressed keys
-        fee = self.fee * int(round(estimated_size/1024.))
-        if fee == 0: fee = self.fee
+        estimated_size =  len(inputs) * 180 + 80    # this assumes non-compressed keys
+        fee = self.fee * int(math.ceil(estimated_size/1000.))
         return fee
 
 
