@@ -79,8 +79,8 @@ register_command('help',                 0, 1, False, False, False, 'Prints this
 register_command('history',              0, 0, True,  True,  False, 'Returns the transaction history of your wallet')
 register_command('importprivkey',        1, 1, False, True,  True,  'Import a private key', 'importprivkey <privatekey>')
 register_command('listaddresses',        2, 2, False, True,  False, 'Returns your list of addresses.', '', listaddr_options)
-register_command('listunspent',          0, 0, True,  False, False, 'Returns the list of unspent inputs in your wallet.')
-register_command('getaddressunspent',    1, 1, True,  False, False, 'Returns the list of unspent inputs in your wallet.')
+register_command('listunspent',          0, 0, True,  True,  False, 'Returns the list of unspent inputs in your wallet.')
+register_command('getaddressunspent',    1, 1, True,  False, False, 'Returns the list of unspent inputs for an address.')
 register_command('mktx',                 5, 5, False, True,  True,  'Create a signed transaction', 'mktx <recipient> <amount> [label]', payto_options)
 register_command('mksendmanytx',         4, 4, False, True,  True,  'Create a signed transaction', mksendmany_syntax, payto_options)
 register_command('payto',                5, 5, True,  True,  True,  'Create and broadcast a transaction.', payto_syntax, payto_options)
@@ -100,7 +100,7 @@ register_command('encrypt',              2,-1, False, False, False, 'encrypt a m
 register_command('decrypt',              2,-1, False, False, False, 'decrypt a message with privkey','decrypt <privkey> <message>')
 register_command('daemon',               1, 1, True, False, False, 'start/stop daemon')
 register_command('getproof',             1, 1, True, False, False, 'get merkle proof', 'getproof <address>')
-register_command('getunspentaddress',    2, 2, True, False, False, 'get the address of an unspent','getunspentaddress <txid> <pos>')
+register_command('getutxoaddress',       2, 2, True, False, False, 'get the address of an unspent transaction output','getutxoaddress <txid> <pos>')
 
 
 
@@ -153,8 +153,10 @@ class Commands:
         return self.network.synchronous_get([ ('blockchain.address.listunspent',[addr]) ])[0]
 
 
-    def getunspentaddress(self, txid, num):
-        return self.network.synchronous_get([ ('blockchain.utxo.get_address',[txid, num]) ])[0]
+    def getutxoaddress(self, txid, num):
+        r = self.network.synchronous_get([ ('blockchain.utxo.get_address',[txid, num]) ])
+        if r: 
+            return {'address':r[0] }
 
 
     def createrawtransaction(self, inputs, outputs):
@@ -227,8 +229,11 @@ class Commands:
         return out
 
     def getaddressbalance(self, addr):
-        b = self.network.synchronous_get([ ('blockchain.address.get_balance',[addr]) ])[0]
-        return str(Decimal(b)/100000000)
+        out = self.network.synchronous_get([ ('blockchain.address.get_balance',[addr]) ])[0]
+        out["confirmed"] =  str(Decimal(out["confirmed"])/100000000)
+        out["unconfirmed"] =  str(Decimal(out["unconfirmed"])/100000000)
+        return out
+
 
     def getproof(self, addr):
         p = self.network.synchronous_get([ ('blockchain.address.get_proof',[addr]) ])[0]
