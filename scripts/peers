@@ -27,7 +27,7 @@ reached_servers = []
 for i in interfaces: i.start(q)
 
 while peers:
-    i = q.get(timeout=1)
+    i = q.get(timeout=10)
     peers.remove(i.server)
     if i.is_connected:
         i.send([('blockchain.headers.subscribe',[])], lambda i,x: results_queue.put((i,x)))
@@ -69,11 +69,10 @@ while reached_servers:
     results[i.server] = r.get('result')
     reached_servers.remove(i.server)
 
-electrum.print_json(results)
-out = analyze(results)
-if out:
-    print "faulty servers:"
-    electrum.print_json(out)
-else:
-    print "ok"
+errors = analyze(results).keys()
+
+for n,v in results.items():
+    print "%30s"%n, v['block_height'], v['utxo_root'], "error" if n in errors else "ok"
+
+
 
