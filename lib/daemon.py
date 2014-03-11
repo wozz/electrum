@@ -26,7 +26,7 @@ import traceback
 import json
 import Queue
 from network import Network
-
+from util import print_msg
 
 
 class NetworkProxy(threading.Thread):
@@ -43,7 +43,7 @@ class NetworkProxy(threading.Thread):
         self.message_id = 0
         self.unanswered_requests = {}
         self.subscriptions = {}
-        self.debug = True
+        self.debug = False
         self.lock = threading.Lock()
         
 
@@ -79,7 +79,7 @@ class NetworkProxy(threading.Thread):
 
     def process(self, response):
         # runs callbacks
-        #print "<--", response
+        if self.debug: print "<--", response
 
         msg_id = response.get('id')
         with self.lock: 
@@ -110,7 +110,7 @@ class NetworkProxy(threading.Thread):
             request = json.dumps( { 'id':self.message_id, 'method':method, 'params':params } )
             self.unanswered_requests[self.message_id] = method, params, callback
             ids.append(self.message_id)
-            # print "-->", request
+            if self.debug: print "-->", request
             self.message_id += 1
             out += request + '\n'
         while out:
@@ -179,6 +179,7 @@ class ClientThread(threading.Thread):
         self.network = network
         self.queue = Queue.Queue()
         self.unanswered_requests = {}
+        self.debug = False
 
 
     def run(self):
@@ -212,7 +213,7 @@ class ClientThread(threading.Thread):
 
 
     def process(self, request):
-        #print "<--", request
+        if self.debug: print "<--", request
         method = request['method']
         params = request['params']
         _id = request['id']
@@ -228,6 +229,7 @@ class ClientThread(threading.Thread):
             except BaseException as e:
                 out['error'] =str(e)
             self.queue.put(out) 
+            return
 
         if method == 'daemon.shutdown':
             self.server.running = False
@@ -255,7 +257,7 @@ class ClientThread(threading.Thread):
             while out:
                 n = self.s.send(out)
                 out = out[n:]
-            #print "-->", r
+            if self.debug: print "-->", r
         
 
 
@@ -290,28 +292,6 @@ class NetworkServer:
             t = time.time()
             client = ClientThread(self, self.network, connection)
             client.start()
-
-
-
-def start_daemon(config):
-    pid = os.fork()
-    if (pid == 0): # The first child.
-        os.chdir("/")
-        os.setsid()
-        os.umask(0)
-        pid2 = os.fork()
-        if (pid2 == 0):  # Second child
-            server = NetworkServer(config)
-            try:
-                server.main_loop()
-            except KeyboardInterrupt:
-                print "Ctrl C - Stopping server"
-            sys.exit(1)
-
-        sys.exit(0)
-
-    # should use a signal
-    time.sleep(2)
 
 
 
