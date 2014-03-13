@@ -221,18 +221,11 @@ class ElectrumWindow(QMainWindow):
 
         actuator = lite_window.MiniActuator(self)
 
-        # Should probably not modify the current path but instead
-        # change the behaviour of rsrc(...)
-        old_path = QDir.currentPath()
         actuator.load_theme()
 
         self.mini = lite_window.MiniWindow(actuator, self.go_full, self.config)
 
         driver = lite_window.MiniDriver(self, self.mini)
-
-        # Reset path back to original value now that loading the GUI
-        # is completed.
-        QDir.setCurrent(old_path)
 
         if self.config.get('lite_mode') is True:
             self.go_lite()
@@ -1067,7 +1060,8 @@ class ElectrumWindow(QMainWindow):
         else:
             menu.addAction(_("Maximize"), lambda: self.account_set_expanded(item, k, True))
         menu.addAction(_("Rename"), lambda: self.edit_account_label(k))
-        menu.addAction(_("View details"), lambda: self.show_account_details(k))
+        if self.wallet.seed_version > 4:
+            menu.addAction(_("View details"), lambda: self.show_account_details(k))
         if self.wallet.account_is_pending(k):
             menu.addAction(_("Delete"), lambda: self.delete_pending_account(k))
         menu.exec_(self.receive_list.viewport().mapToGlobal(position))

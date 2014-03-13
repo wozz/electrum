@@ -639,9 +639,9 @@ class NewWallet:
         rs = self.rebase_sequence(account, sequence)
         dd = []
         for root, public_sequence in rs:
-            c, K, _ = self.master_public_keys[root]
+            c, K, cK = self.master_public_keys[root]
             s = '/' + '/'.join( map(lambda x:str(x), public_sequence) )
-            dd.append( 'bip32(%s,%s,%s)'%(c,K, s) )
+            dd.append( 'bip32(%s,%s,%s)'%(c, cK, s) )
         return '&'.join(dd)
 
 
@@ -1251,7 +1251,7 @@ class NewWallet:
                         try:
                             default_label = self.labels[o_addr]
                         except KeyError:
-                            default_label = o_addr
+                            default_label = '>' + o_addr
                         break
                 else:
                     default_label = '(internal)'
@@ -1273,7 +1273,7 @@ class NewWallet:
                     try:
                         default_label = self.labels[o_addr]
                     except KeyError:
-                        default_label = o_addr
+                        default_label = '<' + o_addr
 
         return default_label
 
@@ -1813,6 +1813,8 @@ class Wallet(object):
             seed_version = NEW_SEED_VERSION if config.get('bip32') is True else OLD_SEED_VERSION
         else:
             seed_version = storage.get('seed_version')
+            if not seed_version:
+                seed_version = OLD_SEED_VERSION if len(storage.get('master_public_key')) == 128 else NEW_SEED_VERSION
 
         if seed_version == OLD_SEED_VERSION:
             return OldWallet(storage)
