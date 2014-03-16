@@ -70,14 +70,28 @@ class Plugin(BasePlugin):
 
         username = str(line1.text())
 
+        if username[:1] == '+':
+            username = username[1:]
+
         rjson1 = self.get_json('www.onename.io', "/" + username + ".json")
         rjson2 = self.get_json('dns.dnschain.net', "/u/" + username)
+
+        while 'next' in rjson2:
+            nextjson = self.get_json('dns.dnschain.net', "/" + rjson2['next'])
+            for i in nextjson:
+                rjson2[i] = nextjson[i]
+            if not 'next' in nextjson:
+                break
+
+        if not rjson1['v'] == "0.2":
+            QMessageBox.warning(self, _('Error'), _('Incompatible key version'), _('OK'))
+            return
 
         address1 = rjson1['bitcoin']['address']
         address2 = rjson2['bitcoin']['address']
 
         try:
-            label = rjson1['name']['formatted']
+            label = "+" + username + " (" + rjson1['name']['formatted'] + ")"
         except Exception:
             pass
 
@@ -86,9 +100,31 @@ class Plugin(BasePlugin):
             return
         else:
             address = address1
-            
+
         if not is_valid(address):
             QMessageBox.warning(self, _('Error'), _('Invalid Address'), _('OK'))
+            return
+
+        d2 = QDialog(self.win)
+        vbox2 = QVBoxLayout(d2)
+        grid2 = QGridLayout()
+        grid2.addWidget(QLabel("+" + username), 1, 1)
+        if 'name' in rjson1:
+            grid2.addWidget(QLabel('Name: '),2,0)
+            grid2.addWidget(QLabel(str(rjson1['name']['formatted'])),2,1)
+
+        if 'location' in rjson1:
+            grid2.addWidget(QLabel('Location: '),3,0)
+            grid2.addWidget(QLabel(str(rjson1['location']['formatted'])),3,1)
+
+        grid2.addWidget(QLabel('Address: '),4,0)
+        grid2.addWidget(QLabel(address),4,1)
+
+
+        vbox2.addLayout(grid2)
+        vbox2.addLayout(ok_cancel_buttons(d2))
+
+        if not d2.exec_():
             return
 
         self.win.wallet.add_contact(address)
