@@ -14,7 +14,7 @@ import httplib
 
 class Plugin(BasePlugin):
     def fullname(self):
-        return 'OneName Contacts'
+        return 'NameID Contacts'
 
     def description(self):
         return 'Import contacts from the Namecoin blockchain.'
@@ -54,7 +54,7 @@ class Plugin(BasePlugin):
        
         d = QDialog(self.win)
         vbox = QVBoxLayout(d)
-        vbox.addWidget(QLabel(_('OneName Contact')+':'))
+        vbox.addWidget(QLabel(_('NameID Contact')+':'))
 
         grid = QGridLayout()
         line1 = QLineEdit()
@@ -74,11 +74,23 @@ class Plugin(BasePlugin):
             username = username[1:]
 
         try:
-            rjson1 = self.get_json('www.onename.io', "/" + username + ".json")
-            rjson2 = self.get_json('dns.dnschain.net', "/u/" + username)
+            rjson1 = self.get_json('name.thwg.org', "/id/" + username)
+            rjson2 = self.get_json('dns.dnschain.net', "/id/" + username)
         except Exception:
             QMessageBox.warning(self.win, _('Error'), _('Not Found'), _('OK'))
             return
+            
+
+        while 'next' in rjson1:
+            try:
+                nextjson = self.get_json('name.thwg.org', "/" + rjson1['next'])
+            except Exception:
+                QMessageBox.warning(self.win, _('Error'), _('Not Found'), _('OK'))
+                return
+            for i in nextjson:
+                rjson1[i] = nextjson[i]
+            if not 'next' in nextjson:
+                break
 
         while 'next' in rjson2:
             try:
@@ -91,15 +103,11 @@ class Plugin(BasePlugin):
             if not 'next' in nextjson:
                 break
 
-        if not rjson1['v'] == "0.2":
-            QMessageBox.warning(self.win, _('Error'), _('Incompatible key version'), _('OK'))
-            return
-
-        address1 = rjson1['bitcoin']['address']
-        address2 = rjson2['bitcoin']['address']
+        address1 = rjson1['bitcoin']
+        address2 = rjson2['bitcoin']
 
         try:
-            label = "+" + username + " (" + rjson1['name']['formatted'] + ")"
+            label = "id/" + username + " (" + rjson1['name'] + ")"
         except Exception:
             pass
 
@@ -108,22 +116,26 @@ class Plugin(BasePlugin):
             return
         else:
             address = address1
-
-        if not is_valid(address):
-            QMessageBox.warning(self.win, _('Error'), _('Invalid Address'), _('OK'))
+        
+        try:
+            if not is_valid(address):
+                QMessageBox.warning(self.win, _('Error'), _('Invalid Address'), _('OK'))
+                return
+        except Exception:
+            QMessageBox.warning(self.win, _('Error'), _('Unsupported Address Format'), _('OK'))
             return
 
         d2 = QDialog(self.win)
         vbox2 = QVBoxLayout(d2)
         grid2 = QGridLayout()
-        grid2.addWidget(QLabel("+" + username), 1, 1)
+        grid2.addWidget(QLabel("id/" + username), 1, 1)
         if 'name' in rjson1:
             grid2.addWidget(QLabel('Name: '),2,0)
-            grid2.addWidget(QLabel(str(rjson1['name']['formatted'])),2,1)
+            grid2.addWidget(QLabel(str(rjson1['name'])),2,1)
 
-        if 'location' in rjson1:
-            grid2.addWidget(QLabel('Location: '),3,0)
-            grid2.addWidget(QLabel(str(rjson1['location']['formatted'])),3,1)
+        if 'email' in rjson1:
+            grid2.addWidget(QLabel('Email: '),3,0)
+            grid2.addWidget(QLabel(str(rjson1['email'])),3,1)
 
         grid2.addWidget(QLabel('Address: '),4,0)
         grid2.addWidget(QLabel(address),4,1)
