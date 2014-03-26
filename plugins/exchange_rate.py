@@ -11,6 +11,7 @@ from decimal import Decimal
 from electrum.plugins import BasePlugin
 from electrum.i18n import _
 from electrum_gui.qt.util import *
+from electrum_gui.qt.amountedit import AmountEdit
 
 
 EXCHANGES = ["BitcoinAverage",
@@ -70,7 +71,7 @@ class Exchanger(threading.Thread):
             except Exception:
                 return
             return btc_amount * decimal.Decimal(str(resp_rate["bpi"][str(quote_currency)]["rate_float"]))
-        return btc_amount * decimal.Decimal(quote_currencies[quote_currency])
+        return btc_amount * decimal.Decimal(str(quote_currencies[quote_currency]))
 
     def stop(self):
         self.is_running = False
@@ -126,7 +127,7 @@ class Exchanger(threading.Thread):
         lenprices = len(winkresp["prices"])
         usdprice = winkresp["prices"][lenprices-1]["y"]
         try:
-            quote_currencies["USD"] = decimal.Decimal(usdprice)
+            quote_currencies["USD"] = decimal.Decimal(str(usdprice))
             with self.lock:
                 self.quote_currencies = quote_currencies
         except KeyError:
@@ -141,7 +142,7 @@ class Exchanger(threading.Thread):
         quote_currencies = {"CAD": 0.0}
         cadprice = jsonresp["last"]
         try:
-            quote_currencies["CAD"] = decimal.Decimal(cadprice)
+            quote_currencies["CAD"] = decimal.Decimal(str(cadprice))
             with self.lock:
                 self.quote_currencies = quote_currencies
         except KeyError:
@@ -156,7 +157,7 @@ class Exchanger(threading.Thread):
         quote_currencies = {"CNY": 0.0}
         cnyprice = jsonresp["ticker"]["last"]
         try:
-            quote_currencies["CNY"] = decimal.Decimal(cnyprice)
+            quote_currencies["CNY"] = decimal.Decimal(str(cnyprice))
             with self.lock:
                 self.quote_currencies = quote_currencies
         except KeyError:
@@ -291,7 +292,7 @@ class Plugin(BasePlugin):
     def init(self):
         self.win = self.gui.main_window
         self.win.connect(self.win, SIGNAL("refresh_currencies()"), self.win.update_status)
-        self.btc_rate = Decimal(0.0)
+        self.btc_rate = Decimal("0.0")
         # Do price discovery
         self.exchanger = Exchanger(self)
         self.exchanger.start()
@@ -309,7 +310,7 @@ class Plugin(BasePlugin):
     def create_quote_text(self, btc_balance):
         quote_currency = self.config.get("currency", "EUR")
         self.exchanger.use_exchange = self.config.get("use_exchange", "Blockchain")
-        cur_rate = self.exchanger.exchange(Decimal(1.0), quote_currency)
+        cur_rate = self.exchanger.exchange(Decimal("1.0"), quote_currency)
         if cur_rate is None:
             quote_text = ""
         else:
@@ -335,6 +336,11 @@ class Plugin(BasePlugin):
     def toggle(self):
         out = BasePlugin.toggle(self)
         self.win.update_status()
+        if self.config.get('use_exchange_rate'):
+            try:
+                self.fiat_button
+            except:
+                self.gui.main_window.show_message(_("To see fiat amount when sending bitcoin, please restart Electrum to activate the new GUI settings."))
         return out
 
 
@@ -376,12 +382,12 @@ class Plugin(BasePlugin):
                 tx_time = int(tx_info['timestamp'])
                 tx_time_str = datetime.datetime.fromtimestamp(tx_time).strftime('%Y-%m-%d')
                 try:
-                    tx_USD_val = "%.2f %s" % (Decimal(tx_info['value']) / 100000000 * Decimal(resp_hist['bpi'][tx_time_str]), "USD")
+                    tx_USD_val = "%.2f %s" % (Decimal(str(tx_info['value'])) / 100000000 * Decimal(resp_hist['bpi'][tx_time_str]), "USD")
                 except KeyError:
-                    tx_USD_val = "%.2f %s" % (self.btc_rate * Decimal(tx_info['value'])/100000000 , "USD")
+                    tx_USD_val = "%.2f %s" % (self.btc_rate * Decimal(str(tx_info['value']))/100000000 , "USD")
 
                 item.setText(5, tx_USD_val)
-                if Decimal(tx_info['value']) < 0:
+                if Decimal(str(tx_info['value'])) < 0:
                     item.setForeground(5, QBrush(QColor("#BC1E1E")))
 
             for i, width in enumerate(self.gui.main_window.column_widths['history']):
@@ -396,6 +402,7 @@ class Plugin(BasePlugin):
 
     def settings_dialog(self):
         d = QDialog()
+        d.setWindowTitle("Settings")
         layout = QGridLayout(d)
         layout.addWidget(QLabel(_('Exchange rate API: ')), 0, 0)
         layout.addWidget(QLabel(_('Currency: ')), 1, 0)
@@ -423,6 +430,12 @@ class Plugin(BasePlugin):
                     hist_checkbox.setChecked(False)
                     hist_checkbox.setEnabled(False)
                 self.win.update_status()
+                try:
+                    self.fiat_button
+                except:
+                    pass
+                else:
+                    self.fiat_button.setText(cur_request)
 
         def disable_check():
             hist_checkbox.setChecked(False)
@@ -511,3 +524,69 @@ class Plugin(BasePlugin):
 
 
         
+    def fiat_unit(self):
+        r = {}
+        self.set_quote_text(100000000, r)
+        quote = r.get(0)
+        if quote:
+          return quote[-3:]
+        else:
+          return "???"
+
+    def fiat_dialog(self):
+        if not self.config.get('use_exchange_rate'):
+          self.gui.main_window.show_message(_("To use this feature, first enable the exchange rate plugin."))
+          return
+        
+        if not self.gui.main_window.network.is_connected():
+          self.gui.main_window.show_message(_("To use this feature, you must have a network connection."))
+          return
+
+        quote_currency = self.config.get("currency", "EUR")
+
+        d = QDialog(self.gui.main_window)
+        d.setWindowTitle("Fiat")
+        vbox = QVBoxLayout(d)
+        text = "Amount to Send in " + quote_currency
+        vbox.addWidget(QLabel(_(text)+':'))
+
+        grid = QGridLayout()
+        fiat_e = AmountEdit(self.fiat_unit)
+        grid.addWidget(fiat_e, 1, 0)
+
+        r = {}
+        self.set_quote_text(100000000, r)
+        quote = r.get(0)
+        if quote:
+          text = "  1 BTC=%s"%quote
+          grid.addWidget(QLabel(_(text)), 4, 0, 3, 0)
+
+        vbox.addLayout(grid)
+        vbox.addLayout(ok_cancel_buttons(d))
+
+        if not d.exec_():
+            return
+
+        fiat = str(fiat_e.text())
+
+        if str(fiat) == "" or str(fiat) == ".":
+            fiat = "0"
+
+        r = {}
+        self.set_quote_text(100000000, r)
+        quote = r.get(0)
+        if not quote:
+            self.gui.main_window.show_message(_("Exchange rate not available.  Please check your network connection."))
+            return
+        else:
+            quote = quote[:-4]
+            btcamount = Decimal(fiat) / Decimal(quote)
+            if str(self.gui.main_window.base_unit()) == "mBTC":
+                btcamount = btcamount * 1000
+            quote = "%.8f"%btcamount
+            self.gui.main_window.amount_e.setText( quote )
+
+    def exchange_rate_button(self, grid):
+        quote_currency = self.config.get("currency", "EUR")
+        self.fiat_button = EnterButton(_(quote_currency), self.fiat_dialog)
+        grid.addWidget(self.fiat_button, 4, 3, Qt.AlignHCenter)
