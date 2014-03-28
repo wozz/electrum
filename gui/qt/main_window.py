@@ -490,11 +490,12 @@ class ElectrumWindow(QMainWindow):
                 text =  _( "Balance" ) + ": %s "%( self.format_amount(c) ) + self.base_unit()
                 if u: text +=  " [%s unconfirmed]"%( self.format_amount(u,True).strip() )
 
+                # append fiat balance and price from exchange rate plugin
                 r = {}
-                run_hook('set_quote_text', c+u, r)
+                run_hook('get_fiat_status_text', c+u, r)
                 quote = r.get(0)
                 if quote:
-                    text += "  (%s)"%quote
+                    text += "%s"%quote
 
                 self.tray.setToolTip(text)
                 icon = QIcon(":icons/status_connected.png")
@@ -779,7 +780,7 @@ class ElectrumWindow(QMainWindow):
                 self.funds_error = True
                 text = _( "Not enough funds" )
                 c, u = self.wallet.get_frozen_balance()
-                if c+u: text += ' (' + self.format_amount(c+u).strip() + self.base_unit() + ' ' +_("are frozen") + ')'
+                if c+u: text += ' (' + self.format_amount(c+u).strip() + ' ' + self.base_unit() + ' ' +_("are frozen") + ')'
 
             self.statusBar().showMessage(text)
             self.amount_e.setPalette(palette)
@@ -1351,6 +1352,7 @@ class ElectrumWindow(QMainWindow):
         self.updatelabel = UpdateLabel(self.config, sb)
 
         self.account_selector = QComboBox()
+        self.account_selector.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.connect(self.account_selector,SIGNAL("activated(QString)"),self.change_account)
         sb.addPermanentWidget(self.account_selector)
 
@@ -1398,6 +1400,7 @@ class ElectrumWindow(QMainWindow):
     def new_contact_dialog(self):
 
         d = QDialog(self)
+        d.setWindowTitle(_("New Contact"))
         vbox = QVBoxLayout(d)
         vbox.addWidget(QLabel(_('New Contact')+':'))
 
@@ -1787,6 +1790,7 @@ class ElectrumWindow(QMainWindow):
     def password_dialog(self ):
         d = QDialog(self)
         d.setModal(1)
+        d.setWindowTitle(_("Enter Password"))
 
         pw = QLineEdit()
         pw.setEchoMode(2)
