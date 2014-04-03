@@ -1,12 +1,9 @@
 ##Electrum - lightweight Bitcoin client
 
-Licence: GNU GPL v3
-
-Author: thomasv@bitcointalk.org
-
-Language: Python
-
-Homepage: http://electrum.org/
+Licence: GNU GPL v3  
+Author: thomasv@bitcointalk.org  
+Language: Python  
+Homepage: http://electrum.org/  
 
 
 ###INSTALL
