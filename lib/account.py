@@ -147,20 +147,23 @@ class BIP32_Account(Account):
     def first_address(self):
         return self.get_address(0,0)
 
-    def get_pubkey(self, for_change, n):
-        _, _, _, c, cK = deserialize_xkey(self.xpub)
+    def get_master_pubkeys(self):
+        return [self.xpub]
+
+    def get_pubkey_from_x(self, xpub, for_change, n):
+        _, _, _, c, cK = deserialize_xkey(xpub)
         for i in [for_change, n]:
             cK, c = CKD_pub(cK, c, i)
         return cK.encode('hex')
 
+    def get_pubkeys(self, sequence):
+        return sorted(map(lambda x: self.get_pubkey_from_x(x, *sequence), self.get_master_pubkeys()))
+
+    def get_pubkey(self, for_change, n):
+        return self.get_pubkeys((for_change, n))[0]
+
     def redeem_script(self, sequence):
         return None
-
-    def get_pubkeys(self, sequence):
-        return [self.get_pubkey(*sequence)]
-
-    def get_master_pubkeys(self):
-        return [self.xpub]
 
     def get_type(self):
         return _('Standard 1 of 1')
@@ -181,22 +184,13 @@ class BIP32_Account_2of2(BIP32_Account):
         d['xpub2'] = self.xpub2
         return d
 
-    def get_pubkey2(self, for_change, n):
-        _, _, _, c, cK = deserialize_xkey(self.xpub2)
-        for i in [for_change, n]:
-            cK, c = CKD_pub(cK, c, i)
-        return cK.encode('hex')
-
     def redeem_script(self, sequence):
-        pubkeys = sorted(self.get_pubkeys(sequence))
+        pubkeys = self.get_pubkeys(sequence)
         return Transaction.multisig_script(pubkeys, 2)
 
     def get_address(self, for_change, n):
         address = hash_160_to_bc_address(hash_160(self.redeem_script((for_change, n)).decode('hex')), 5)
         return address
-
-    def get_pubkeys(self, sequence):
-        return [ self.get_pubkey( *sequence ), self.get_pubkey2( *sequence )]
 
     def get_master_pubkeys(self):
         return [self.xpub, self.xpub2]
@@ -215,15 +209,6 @@ class BIP32_Account_2of3(BIP32_Account_2of2):
         d = BIP32_Account_2of2.dump(self)
         d['xpub3'] = self.xpub3
         return d
-
-    def get_pubkey3(self, for_change, n):
-        _, _, _, c, cK = deserialize_xkey(self.xpub3)
-        for i in [for_change, n]:
-            cK, c = CKD_pub(cK, c, i)
-        return cK.encode('hex')
-
-    def get_pubkeys(self, sequence):
-        return [ self.get_pubkey( *sequence ), self.get_pubkey2( *sequence ), self.get_pubkey3( *sequence )]
 
     def get_master_pubkeys(self):
         return [self.xpub, self.xpub2, self.xpub3]

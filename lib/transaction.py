@@ -377,7 +377,7 @@ class Transaction:
         self.outputs = self.d['outputs']
         self.outputs = map(lambda x: (x['address'],x['value']), self.outputs)
         self.locktime = self.d['lockTime']
-        self.is_complete = is_complete
+
         
     def __str__(self):
         return self.raw
@@ -386,7 +386,6 @@ class Transaction:
     def from_io(klass, inputs, outputs):
         raw = klass.serialize(inputs, outputs, for_sig = -1) # for_sig=-1 means do not sign
         self = klass(raw)
-        self.is_complete = False
         self.inputs = inputs
         self.outputs = outputs
         return self
@@ -421,6 +420,7 @@ class Transaction:
     @classmethod
     def serialize( klass, inputs, outputs, for_sig = None ):
 
+        push_script = lambda x: op_push(len(x)/2) + x
         s  = int_to_hex(1,4)                                         # version
         s += var_int( len(inputs) )                                  # number of inputs
         for i in range(len(inputs)):
@@ -431,26 +431,23 @@ class Transaction:
             if for_sig is None:
                 signatures = txin['signatures']
                 pubkeys = txin['pubkeys']
+                sig_list = ''
+                for pubkey in pubkeys:
+                    sig = signatures.get(pubkey)
+                    if not sig: 
+                        continue
+                    sig = sig + '01'
+                    sig_list += push_script(sig)
+
                 if not txin.get('redeemScript'):
-                    pubkey = pubkeys[0]
-                    script = ''
-                    if signatures:
-                        sig = signatures[0]
-                        sig = sig + '01'                                 # hashtype
-                        script += op_push(len(sig)/2)
-                        script += sig
-                    script += op_push(len(pubkey)/2)
-                    script += pubkey
+                    script = sig_list
+                    script += push_script(pubkeys[0])
                 else:
                     script = '00'                                    # op_0
-                    for sig in signatures:
-                        sig = sig + '01'
-                        script += op_push(len(sig)/2)
-                        script += sig
-
+                    script += sig_list
                     redeem_script = klass.multisig_script(pubkeys,2)
-                    script += op_push(len(redeem_script)/2)
-                    script += redeem_script
+                    assert redeem_script == txin.get('redeemScript')
+                    script += push_script(redeem_script)
 
             elif for_sig==i:
                 if txin.get('redeemScript'):
@@ -489,17 +486,37 @@ class Transaction:
         return s
 
 
-    def for_sig(self,i):
+    def tx_for_sig(self,i):
         return self.serialize(self.inputs, self.outputs, for_sig = i)
 
 
     def hash(self):
         return Hash(self.raw.decode('hex') )[::-1].encode('hex')
 
+    def add_signature(self, i, pubkey, sig):
+        txin = self.inputs[i]
+        signatures = txin.get("signatures",{})
+        signatures[pubkey] = sig
+        txin["signatures"] = signatures
+        self.inputs[i] = txin
+        print_error("adding signature for", pubkey)
+        self.raw = self.serialize( self.inputs, self.outputs )
+
+
+    def is_complete(self):
+        for i, txin in enumerate(self.inputs):
+            redeem_script = txin.get('redeemScript')
+            num, redeem_pubkeys = parse_redeemScript(redeem_script) if redeem_script else (1, [txin.get('redeemPubkey')])
+            signatures = txin.get("signatures",{})
+            if len(signatures) == num:
+                continue
+            else:
+                return False
+        return True
+
 
 
     def sign(self, keypairs):
-        is_complete = True
         print_error("tx.sign(), keypairs:", keypairs)
 
         for i, txin in enumerate(self.inputs):
@@ -511,35 +528,28 @@ class Transaction:
             # add pubkeys
             txin["pubkeys"] = redeem_pubkeys
             # get list of already existing signatures
-            signatures = txin.get("signatures",[])
+            signatures = txin.get("signatures",{})
             # continue if this txin is complete
             if len(signatures) == num:
                 continue
 
-            tx_for_sig = self.serialize( self.inputs, self.outputs, for_sig = i )
-
-            print_error("redeem pubkeys input %d"%i, redeem_pubkeys)
+            for_sig = Hash(self.tx_for_sig(i).decode('hex'))
             for pubkey in redeem_pubkeys:
-                # check if we have the corresponding private key
                 if pubkey in keypairs.keys():
                     # add signature
                     sec = keypairs[pubkey]
-                    compressed = is_compressed(sec)
                     pkey = regenerate_key(sec)
                     secexp = pkey.secret
                     private_key = ecdsa.SigningKey.from_secret_exponent( secexp, curve = SECP256k1 )
                     public_key = private_key.get_verifying_key()
-                    sig = private_key.sign_digest_deterministic( Hash( tx_for_sig.decode('hex') ), hashfunc=hashlib.sha256, sigencode = ecdsa.util.sigencode_der )
-                    assert public_key.verify_digest( sig, Hash( tx_for_sig.decode('hex') ), sigdecode = ecdsa.util.sigdecode_der)
-                    signatures.append( sig.encode('hex') )
-                    print_error("adding signature for", pubkey)
-            
-            txin["signatures"] = signatures
-            is_complete = is_complete and len(signatures) == num
+                    sig = private_key.sign_digest_deterministic( for_sig, hashfunc=hashlib.sha256, sigencode = ecdsa.util.sigencode_der )
+                    assert public_key.verify_digest( sig, for_sig, sigdecode = ecdsa.util.sigdecode_der)
+                    self.add_signature(i, pubkey, sig.encode('hex'))
 
-        print_error("is_complete", is_complete)
-        self.is_complete = is_complete
+
+        print_error("is_complete", self.is_complete())
         self.raw = self.serialize( self.inputs, self.outputs )
+
 
 
     def deserialize(self):
@@ -572,7 +582,7 @@ class Transaction:
             pubkeys, signatures, address = get_address_from_input_script(scriptSig)
         else:
             pubkeys = []
-            signatures = []
+            signatures = {}
             address = None
 
         d['address'] = address
@@ -681,7 +691,7 @@ class Transaction:
                 'redeemScript':i.get('redeemScript'),
                 'redeemPubkey':i.get('redeemPubkey'),
                 'pubkeys':i.get('pubkeys'),
-                'signatures':i.get('signatures',[]),
+                'signatures':i.get('signatures',{}),
                 }
             info.append(item)
         return info
@@ -691,10 +701,10 @@ class Transaction:
         import json
         out = {
             "hex":self.raw,
-            "complete":self.is_complete
+            "complete":self.is_complete()
             }
 
-        if not self.is_complete:
+        if not self.is_complete():
             input_info = self.get_input_info()
             out['input_info'] = json.dumps(input_info).replace(' ','')
 
