@@ -2170,7 +2170,12 @@ class ElectrumWindow(QMainWindow):
         grid.addWidget(HelpButton(_('Using change addresses makes it more difficult for other people to track your transactions.')+' '), 4, 2)
         if not self.config.is_modifiable('use_change'): usechange_cb.setEnabled(False)
 
-        grid.setRowStretch(5,1)
+        min_on_close_cb = QCheckBox(_('Minimize on close'))
+        min_on_close_cb.setChecked(self.config.get("min-on-close", False))
+        grid.addWidget(min_on_close_cb, 5, 0)
+        grid.addWidget(HelpButton(_('Enabling this will minimize Electrum to the tray instead of closing the program')+' '), 5, 2)
+
+        grid.setRowStretch(6,1)
 
         vbox.addLayout(grid)
         vbox.addLayout(ok_cancel_buttons(d))
@@ -2207,6 +2212,9 @@ class ElectrumWindow(QMainWindow):
             self.wallet.use_change = usechange_result
             self.wallet.storage.put('use_change', self.wallet.use_change)
 
+        min_on_close_result = min_on_close_cb.isChecked()
+        self.config.set_key("min-on-close", min_on_close_result, True)
+
         unit_result = units[unit_combo.currentIndex()]
         if self.base_unit() != unit_result:
             self.decimal_point = 8 if unit_result == 'BTC' else 5
@@ -2233,13 +2241,18 @@ class ElectrumWindow(QMainWindow):
         NetworkDialog(self.wallet.network, self.config, self).do_exec()
 
     def closeEvent(self, event):
-        self.tray.hide()
         g = self.geometry()
         self.config.set_key("winpos-qt", [g.left(),g.top(),g.width(),g.height()], True)
         self.save_column_widths()
         self.config.set_key("console-history", self.console.history[-50:], True)
         self.wallet.storage.put('accounts_expanded', self.accounts_expanded)
-        event.accept()
+        if self.config.get("min-on-close", False):
+            self.hide()
+            self.tray.show()
+            event.ignore()
+        else:
+            self.tray.hide()
+            event.accept()
 
 
     def plugins_dialog(self):
