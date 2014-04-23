@@ -1311,6 +1311,7 @@ class ElectrumWindow(QMainWindow):
                         used_item.addChild(item)
                     else:
                         seq_item.addChild(item)
+                used_item.setExpanded(self.config.get('expand_used', True))
 
 
         for k, addr in self.wallet.get_pending_accounts():
@@ -2216,7 +2217,12 @@ class ElectrumWindow(QMainWindow):
         grid.addWidget(HelpButton(_('Using change addresses makes it more difficult for other people to track your transactions.')+' '), 4, 2)
         if not self.config.is_modifiable('use_change'): usechange_cb.setEnabled(False)
 
-        grid.setRowStretch(5,1)
+        expand_used_default = QCheckBox(_('Expand Used Addresses Default'))
+        expand_used_default.setChecked(self.config.get('expand_used', True))
+        grid.addWidget(expand_used_default, 5, 0)
+        grid.addWidget(HelpButton(_('Default setting for Used addresses in receive tab')+' '), 5, 2)
+
+        grid.setRowStretch(6,1)
 
         vbox.addLayout(grid)
         vbox.addLayout(ok_cancel_buttons(d))
@@ -2252,6 +2258,9 @@ class ElectrumWindow(QMainWindow):
         if self.wallet.use_change != usechange_result:
             self.wallet.use_change = usechange_result
             self.wallet.storage.put('use_change', self.wallet.use_change)
+
+        expand_used_setting = expand_used_default.isChecked()
+        self.config.set_key('expand_used', expand_used_setting)
 
         unit_result = units[unit_combo.currentIndex()]
         if self.base_unit() != unit_result:
