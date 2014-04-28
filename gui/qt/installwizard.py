@@ -194,21 +194,30 @@ class InstallWizard(QDialog):
             return
         
 
-    def show_message(self, msg):
+    def show_message(self, msg, icon=None):
         vbox = QVBoxLayout()
+        self.set_layout(vbox)
+        if icon:
+            logo = QLabel()
+            logo.setPixmap(icon)
+            vbox.addWidget(logo)
         vbox.addWidget(QLabel(msg))
         vbox.addStretch(1)
         vbox.addLayout(close_button(self, _('Next')))
-        self.set_layout(vbox)
         if not self.exec_(): 
             return None
 
-    def question(self, msg):
+
+    def question(self, msg, icon=None):
         vbox = QVBoxLayout()
+        self.set_layout(vbox)
+        if icon:
+            logo = QLabel()
+            logo.setPixmap(icon)
+            vbox.addWidget(logo)
         vbox.addWidget(QLabel(msg))
         vbox.addStretch(1)
         vbox.addLayout(ok_cancel_buttons(self, _('OK')))
-        self.set_layout(vbox)
         if not self.exec_(): 
             return None
         return True
@@ -266,9 +275,9 @@ class InstallWizard(QDialog):
             return '2of3'
 
 
-    def run(self, action = None):
+    def run(self, action):
 
-        if action is None:
+        if action == 'new':
             action = self.restore_or_create()
 
         if action is None: 
@@ -280,32 +289,53 @@ class InstallWizard(QDialog):
                 return 
 
             if t == '2of3':
-                run_hook('create_cold_seed', self.storage, self)
-                return
+                action = 'create_cold'
+        
 
-
-        if action in ['create', 'create2of3']:
-
+        if action in ['create', 'create_cold', 'create_hot', 'create_remote']:
             wallet = Wallet(self.storage)
+
+        if action == 'create':
             seed = wallet.make_seed()
-            sid = 'hot' if action == 'create2of3' else None
-            if not self.show_seed(seed, sid):
+            if not self.show_seed(seed, None):
                 return
-            if not self.verify_seed(seed, sid):
+            if not self.verify_seed(seed, None):
                 return
             password = self.password_dialog()
-            wallet.save_seed(seed, password)
-
-            if action == 'create2of3':
-                run_hook('create_third_key', wallet, self)
-                if not wallet.master_public_keys.get("remote/"):
-                    return
-
+            wallet.add_seed(seed, password)
             wallet.create_accounts(password)
             # generate first addresses offline
             self.waiting_dialog(wallet.synchronize)
 
-        elif action == 'restore':
+
+        if action == 'create_cold':
+            run_hook('create_cold_seed', self.storage, self)
+            return
+
+
+        if action == 'create_hot':
+            msg = _('You are about to create the hot seed of a multisig wallet')
+            if not self.question(msg):
+                return
+            seed = wallet.make_seed()
+            if not self.show_seed(seed, 'hot'):
+                return
+            if not self.verify_seed(seed, 'hot'):
+                return
+            password = self.password_dialog()
+            wallet.add_seed(seed, password)
+            action = 'create_remote'
+
+
+        if action == 'create_remote':
+            run_hook('create_remote_key', wallet, self)
+            if not wallet.master_public_keys.get("remote/"):
+                return
+            wallet.create_account()
+            self.waiting_dialog(wallet.synchronize)
+
+
+        if action == 'restore':
             t = self.choose_wallet_type()
             if not t: 
                 return
@@ -315,7 +345,7 @@ class InstallWizard(QDialog):
                 if Wallet.is_seed(text):
                     password = self.password_dialog()
                     wallet = Wallet.from_seed(text, self.storage)
-                    wallet.save_seed(text, password)
+                    wallet.add_seed(text, password)
                     wallet.create_accounts(password)
                 elif Wallet.is_mpk(text):
                     wallet = Wallet.from_mpk(text, self.storage)
@@ -331,14 +361,19 @@ class InstallWizard(QDialog):
                 wallet = Wallet_2of3(self.storage)
 
                 if Wallet.is_seed(text1):
-                    wallet.add_root("m/", text1, password)
+                    wallet.add_seed(text1, password)
+                    if Wallet.is_seed(text2):
+                        wallet.add_cold_seed(text2, password)
+                    else:
+                        wallet.add_master_public_key("cold/", text2)
+
                 elif Wallet.is_mpk(text1):
-                    wallet.add_master_public_key("m/", text1)
-                
-                if Wallet.is_seed(text2):
-                    wallet.add_root("cold/", text2, password)
-                elif Wallet.is_mpk(text2):
-                    wallet.add_master_public_key("cold/", text2)
+                    if Wallet.is_seed(text2):
+                        wallet.add_seed(text2, password)
+                        wallet.add_master_public_key("cold/", text1)
+                    else:
+                        wallet.add_master_public_key("m/", text1)
+                        wallet.add_master_public_key("cold/", text2)
 
                 run_hook('restore_third_key', wallet, self)
 
@@ -348,9 +383,6 @@ class InstallWizard(QDialog):
                 raise
 
 
-
-
-        else: raise
                 
         #if not self.config.get('server'):
         if self.network:

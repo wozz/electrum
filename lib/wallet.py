@@ -237,9 +237,13 @@ class NewWallet:
                 for tx2 in self.transactions.values():
                     tx2.add_extra_addresses({h:tx})
 
+
+    def get_action(self):
+        pass
+
             
     def can_create_accounts(self):
-        return True
+        return not self.is_watching_only()
 
 
     def set_up_to_date(self,b):
@@ -302,7 +306,8 @@ class NewWallet:
         return NEW_SEED_VERSION, unicodedata.normalize('NFC', unicode(seed.strip()))
 
 
-    def save_seed(self, seed, password):
+
+    def add_seed(self, seed, password):
         if self.seed: 
             raise Exception("a seed exists")
         
@@ -322,9 +327,8 @@ class NewWallet:
     def create_watching_only_wallet(self, xpub):
         self.storage.put('seed_version', self.seed_version, True)
         self.add_master_public_key("m/", xpub)
-        xpub0 = self.add_master_keys("m/", "m/0'", None)
-        account = BIP32_Account({'xpub':xpub0})
-        self.add_account("m/0'", account)
+        account = BIP32_Account({'xpub':xpub})
+        self.add_account("m/", account)
 
 
     def create_accounts(self, password):
@@ -354,14 +358,6 @@ class NewWallet:
             xpub = bip32_public_derivation(master_xpub, root, account_id)
             self.add_master_public_key(account_id, xpub)
         return xpub
-
-
-    def add_root(self, name, mnemonic, password, add_private = True):
-        seed = mnemonic_to_seed(mnemonic,'').encode('hex')
-        xpriv, xpub = bip32_root(seed)
-        self.add_master_public_key(name, xpub)
-        if add_private:
-            self.add_master_private_key(name, xpriv, password)
 
 
     def create_master_keys(self, password):
@@ -519,8 +515,13 @@ class NewWallet:
         if s is None: return False
         return s[0] == 1
 
-    def get_master_public_key(self):
-        return self.storage.get("master_public_keys")["m/"]
+    def get_master_public_keys(self):
+        out = {}
+        for k, account in self.accounts.items():
+            name = self.get_account_name(k)
+            mpk_text = '\n\n'.join( account.get_master_pubkeys() )
+            out[name] = mpk_text
+        return out
 
     def get_master_private_key(self, account, password):
         k = self.master_private_keys.get(account)
@@ -681,29 +682,24 @@ class NewWallet:
         # check that the password is correct
         seed = self.get_seed(password)
 
-        # add input info
-        tx.add_input_info(input_info)
-
-        # add redeem script for coins that are in the wallet
-        # FIXME: add redeemPubkey too!
-
-        try:
+        # if input_info is not known, build it using wallet UTXOs
+        if not input_info:
+            input_info = []
             unspent_coins = self.get_unspent_coins()
-        except:
-            # an exception may be raised is the wallet is not synchronized
-            unspent_coins = []
+            for txin in tx.inputs:
+                for item in unspent_coins:
+                    if txin['prevout_hash'] == item['prevout_hash'] and txin['prevout_n'] == item['prevout_n']:
+                        info = { 'address':item['address'], 'scriptPubKey':item['scriptPubKey'] }
+                        self.add_input_info(info)
+                        input_info.append(info)
+                        break
+                else:
+                    print_error( "input not in UTXOs" )
+                    input_info.append(None)
 
-        for txin in tx.inputs:
-            for item in unspent_coins:
-                if txin['prevout_hash'] == item['prevout_hash'] and txin['prevout_n'] == item['prevout_n']:
-                    print_error( "tx input is in unspent coins" )
-                    txin['scriptPubKey'] = item['scriptPubKey']
-                    account, sequence = self.get_address_index(item['address'])
-                    if account != -1:
-                        txin['redeemScript'] = self.accounts[account].redeem_script(sequence)
-                        print_error("added redeemScript", txin['redeemScript'])
-                    break
-
+        # add input_info to the transaction
+        print_error("input_info", input_info)
+        tx.add_input_info(input_info)
 
         # build a list of public/private keys
         keypairs = {}
@@ -715,9 +711,9 @@ class NewWallet:
 
         # add private_keys from KeyID
         self.add_keypairs_from_KeyID(tx, keypairs, password)
-
         # add private keys from wallet
         self.add_keypairs_from_wallet(tx, keypairs, password)
+        # sign the transaction
         self.sign_transaction(tx, keypairs, password)
 
 
@@ -1233,7 +1229,8 @@ class NewWallet:
         inputs, total, fee = self.choose_tx_inputs( amount, fee, len(outputs), domain )
         if not inputs:
             raise ValueError("Not enough funds")
-        self.add_input_info(inputs)
+        for txin in inputs:
+            self.add_input_info(txin)
         outputs = self.add_tx_change(inputs, outputs, amount, fee, total, change_addr)
         return Transaction.from_io(inputs, outputs)
 
@@ -1247,19 +1244,18 @@ class NewWallet:
         return tx
 
 
-    def add_input_info(self, inputs):
-        for txin in inputs:
-            address = txin['address']
-            if address in self.imported_keys.keys():
-                continue
-            account_id, sequence = self.get_address_index(address)
-            account = self.accounts[account_id]
-            txin['KeyID'] = account.get_keyID(sequence)
-            redeemScript = account.redeem_script(sequence)
-            if redeemScript: 
-                txin['redeemScript'] = redeemScript
-            else:
-                txin['redeemPubkey'] = account.get_pubkey(*sequence)
+    def add_input_info(self, txin):
+        address = txin['address']
+        if address in self.imported_keys.keys():
+            return
+        account_id, sequence = self.get_address_index(address)
+        account = self.accounts[account_id]
+        txin['KeyID'] = account.get_keyID(sequence)
+        redeemScript = account.redeem_script(sequence)
+        if redeemScript: 
+            txin['redeemScript'] = redeemScript
+        else:
+            txin['redeemPubkey'] = account.get_pubkey(*sequence)
 
 
     def sign_transaction(self, tx, keypairs, password):
@@ -1490,12 +1486,19 @@ class Wallet_2of2(NewWallet):
     def can_create_accounts(self):
         return False
 
-    def make_account(self, account_id, password):
+    def create_account(self, account_id):
         """Creates and saves the master keys, but does not save the account"""
         xpub1 = self.master_public_keys.get("m/")
         xpub2 = self.master_public_keys.get("cold/")
         account = BIP32_Account_2of2({'xpub':xpub1, 'xpub2':xpub2})
         self.add_account('m/', account)
+
+    def get_master_public_keys(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        return {'hot':xpub1, 'cold':xpub2}
+
+
 
 
 class Wallet_2of3(Wallet_2of2):
@@ -1504,13 +1507,29 @@ class Wallet_2of3(Wallet_2of2):
         NewWallet.__init__(self, storage)
         self.storage.put('wallet_type', '2of3', True)
 
-    def create_accounts(self, password):
+    def create_account(self):
         xpub1 = self.master_public_keys.get("m/")
         xpub2 = self.master_public_keys.get("cold/")
         xpub3 = self.master_public_keys.get("remote/")
         account = BIP32_Account_2of3({'xpub':xpub1, 'xpub2':xpub2, 'xpub3':xpub3})
         self.add_account('m/', account)
 
+    def get_master_public_keys(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        xpub3 = self.master_public_keys.get("remote/")
+        return {'hot':xpub1, 'cold':xpub2, 'remote':xpub3}
+
+    def get_action(self):
+        xpub1 = self.master_public_keys.get("m/")
+        xpub2 = self.master_public_keys.get("cold/")
+        xpub3 = self.master_public_keys.get("remote/")
+        if xpub2 is None:
+            return 'create_cold'
+        if xpub1 is None:
+            return 'create_hot'
+        if xpub3 is None:
+            return 'create_remote'
 
 
 class WalletSynchronizer(threading.Thread):
@@ -1720,11 +1739,12 @@ class OldWallet(NewWallet):
         mpk = OldAccount.mpk_from_seed(seed)
         self.storage.put('master_public_key', mpk, True)
 
-    def get_master_public_key(self):
-        return self.storage.get("master_public_key")
+    def get_master_public_keys(self):
+        mpk = self.storage.get("master_public_key")
+        return {'Main Account':mpk}
 
     def create_accounts(self, password):
-        mpk = self.get_master_public_key()
+        mpk = self.storage.get("master_public_key")
         self.create_account(mpk)
 
     def create_account(self, mpk):
