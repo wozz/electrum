@@ -63,8 +63,8 @@ register_command('createmultisig',       2, 2, False, True,  False, 'similar to 
 register_command('createrawtransaction', 2, 2, False, True,  False, 'similar to bitcoind\'s command')
 register_command('deseed',               0, 0, False, True,  False, 'Remove seed from wallet, creating a seedless, watching-only wallet.')
 register_command('decoderawtransaction', 1, 1, False, False, False, 'similar to bitcoind\'s command')
-register_command('dumpprivkey',          1, 1, False, True,  True,  'Dumps a specified private key for a given address', 'dumpprivkey <bitcoin address>')
-register_command('dumpprivkeys',         0, 0, False, True,  True,  'dump all private keys')
+register_command('getprivatekeys',       1, 1, False, True,  True,  'Get the private keys of a given address', 'getprivatekeys <bitcoin address>')
+register_command('dumpprivkeys',         0, 0, False, True,  True,  'Dump all private keys in your wallet')
 register_command('freeze',               1, 1, False, True,  True,  'Freeze the funds at one of your wallet\'s addresses', 'freeze <address>')
 register_command('getbalance',           0, 1, True,  True,  False, 'Return the balance of your wallet, or of one account in your wallet', 'getbalance [<account>]')
 register_command('getservers',           0, 0, True,  False, False, 'Return the list of available servers')
@@ -193,7 +193,7 @@ class Commands:
     def unfreeze(self,addr):
         return self.wallet.unfreeze(addr)
 
-    def dumpprivkey(self, addr):
+    def getprivatekeys(self, addr):
         return self.wallet.get_private_key(addr, self.password)
 
     def dumpprivkeys(self, addresses = None):
@@ -248,7 +248,7 @@ class Commands:
         return electrum.ELECTRUM_VERSION
  
     def getmpk(self):
-        return self.wallet.get_master_public_keys()
+        return self.wallet.get_master_public_key()
 
     def getseed(self):
         mnemonic = self.wallet.get_mnemonic(self.password)
@@ -264,18 +264,8 @@ class Commands:
 
 
     def sweep(self, privkey, to_address, fee = 0.0001):
-        pubkey = public_key_from_private_key(privkey)
-        address = address_from_private_key(privkey)
-        pay_script = Transaction.pay_script(address)
-        unspent = self.network.synchronous_get([ ('blockchain.address.listunspent',[address])])[0]
-        if not unspent:
-            return
-        total = sum( map(lambda x:int(x.get('value')), unspent) ) - int(Decimal(fee)*100000000)
-        inputs = map(lambda i: {'prevout_hash': i['tx_hash'], 'prevout_n':i['tx_pos'], 'scriptPubKey':pay_script, 'redeemPubkey':pubkey}, unspent)
-        outputs = [(to_address, total)]
-        tx = Transaction.from_io(inputs, outputs)
-        tx.sign({ pubkey:privkey })
-        return tx
+        fee = int(Decimal(fee)*100000000)
+        return Transaction.sweep([privkey], self.network, to_address, fee)
 
 
     def signmessage(self, address, message):
