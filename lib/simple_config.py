@@ -123,7 +123,7 @@ a SimpleConfig instance then reads the wallet file.
 
     def read_system_config(self):
         """Parse and store the system config settings in electrum.conf into system_config[]."""
-        name = '/etc/electrum.conf'
+        name = '/etc/electrum-testnet.conf'
         if os.path.exists(name):
             try:
                 import ConfigParser
@@ -144,7 +144,7 @@ a SimpleConfig instance then reads the wallet file.
         """Parse and store the user config settings in electrum.conf into user_config[]."""
         if not self.path: return
 
-        path = os.path.join(self.path, "config")
+        path = os.path.join(self.path, "config-testnet")
         if os.path.exists(path):
             try:
                 with open(path, "r") as f:
@@ -162,7 +162,7 @@ a SimpleConfig instance then reads the wallet file.
     def save_user_config(self):
         if not self.path: return
 
-        path = os.path.join(self.path, "config")
+        path = os.path.join(self.path, "config-testnet")
         s = repr(self.user_config)
         f = open(path,"w")
         f.write( s )

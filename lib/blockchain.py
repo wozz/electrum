@@ -184,7 +184,7 @@ class Blockchain(threading.Thread):
         return rev_hex(Hash(self.header_to_string(header).decode('hex')).encode('hex'))
 
     def path(self):
-        return os.path.join( self.config.path, 'blockchain_headers')
+        return os.path.join( self.config.path, 'blockchain_testnet_headers')
 
     def init_headers_file(self):
         filename = self.path()

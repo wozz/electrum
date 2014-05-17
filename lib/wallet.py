@@ -72,7 +72,7 @@ class WalletStorage:
             return path
 
         # path in config file
-        path = config.get('default_wallet_path')
+        path = config.get('testnet_wallet_path')
         if path:
             return path
 
@@ -81,10 +81,10 @@ class WalletStorage:
         if not os.path.exists(dirpath):
             os.mkdir(dirpath)
 
-        new_path = os.path.join(config.path, "wallets", "default_wallet")
+        new_path = os.path.join(config.path, "wallets", "testnet_wallet")
 
         # default path in pre 1.9 versions
-        old_path = os.path.join(config.path, "electrum.dat")
+        old_path = os.path.join(config.path, "electrum-testnet.dat")
         if os.path.exists(old_path) and not os.path.exists(new_path):
             os.rename(old_path, new_path)
 
