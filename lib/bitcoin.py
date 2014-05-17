@@ -660,8 +660,8 @@ def bip32_root(seed):
     master_k = I[0:32]
     master_c = I[32:]
     K, cK = get_pubkeys_from_secret(master_k)
-    xprv = ("0488ADE4" + "00" + "00000000" + "00000000").decode("hex") + master_c + chr(0) + master_k
-    xpub = ("0488B21E" + "00" + "00000000" + "00000000").decode("hex") + master_c + cK
+    xprv = ("04358394" + "00" + "00000000" + "00000000").decode("hex") + master_c + chr(0) + master_k
+    xpub = ("043587CF" + "00" + "00000000" + "00000000").decode("hex") + master_c + cK
     return EncodeBase58Check(xprv), EncodeBase58Check(xpub)
 
 
@@ -681,8 +681,8 @@ def bip32_private_derivation(xprv, branch, sequence):
     fingerprint = hash_160(parent_cK)[0:4]
     child_number = ("%08X"%i).decode('hex')
     K, cK = get_pubkeys_from_secret(k)
-    xprv = "0488ADE4".decode('hex') + chr(depth) + fingerprint + child_number + c + chr(0) + k
-    xpub = "0488B21E".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
+    xprv = "04358394".decode('hex') + chr(depth) + fingerprint + child_number + c + chr(0) + k
+    xpub = "043587CF".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
     return EncodeBase58Check(xprv), EncodeBase58Check(xpub)
 
 
@@ -700,7 +700,7 @@ def bip32_public_derivation(xpub, branch, sequence):
 
     fingerprint = hash_160(parent_cK)[0:4]
     child_number = ("%08X"%i).decode('hex')
-    xpub = "0488B21E".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
+    xpub = "043587CF".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
     return EncodeBase58Check(xpub)
 
 
