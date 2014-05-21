@@ -192,6 +192,7 @@ class Blockchain(threading.Thread):
             return
         
         try:
+            raise
             import urllib, socket
             socket.setdefaulttimeout(30)
             print_error("downloading ", self.headers_url )
