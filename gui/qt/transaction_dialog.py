@@ -34,6 +34,8 @@ from PyQt4.QtCore import *
 import PyQt4.QtCore as QtCore
 
 from electrum import transaction
+from electrum.plugins import run_hook
+
 from util import MyTreeWidget
 
 class TxDialog(QDialog):
@@ -80,7 +82,8 @@ class TxDialog(QDialog):
         buttons.addWidget(b)
 
         self.broadcast_button = b = QPushButton(_("Broadcast"))
-        b.clicked.connect(self.broadcast)
+        b.clicked.connect(lambda: self.parent.broadcast_transaction(self.tx))
+
         b.hide()
         buttons.addWidget(b)
 
@@ -92,10 +95,19 @@ class TxDialog(QDialog):
         cancelButton.clicked.connect(lambda: self.done(0))
         buttons.addWidget(cancelButton)
         cancelButton.setDefault(True)
-        
+
+        b = QPushButton(_("Show QR code"))
+        b.clicked.connect(self.show_qr)
+        buttons.insertWidget(1,b)
         self.update()
 
 
+    def show_qr(self):
+        try:
+            json_text = json.dumps(self.tx.as_dict()).replace(' ', '')
+            self.parent.show_qrcode(json_text, 'Transaction')
+        except Exception as e:
+            self.parent.show_message(str(e))
 
 
     def sign(self):
@@ -213,14 +225,6 @@ class TxDialog(QDialog):
         vbox.addWidget(o_text)
 
         
-
-
-    def broadcast(self):
-        result, result_message = self.wallet.sendtx( self.tx )
-        if result:
-            self.show_message(_("Transaction successfully sent")+': %s' % (result_message))
-        else:
-            self.show_message(_("There was a problem sending your transaction:") + '\n %s' % (result_message))
 
     def show_message(self, msg):
         QMessageBox.information(self, _('Message'), msg, _('OK'))

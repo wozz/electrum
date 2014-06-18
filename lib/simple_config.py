@@ -3,8 +3,17 @@ import ast
 import threading
 import os
 
-from util import user_dir, print_error
+from util import user_dir, print_error, print_msg
 
+
+config = None
+def get_config():
+    global config
+    return config
+
+def set_config(c):
+    global config
+    config = c
 
 
 class SimpleConfig:
@@ -32,7 +41,7 @@ a SimpleConfig instance then reads the wallet file.
         self.user_config = {}
         self.read_user_config()
 
-
+        set_config(self)
 
 
 
