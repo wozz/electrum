@@ -34,6 +34,8 @@ from PyQt4.QtCore import *
 import PyQt4.QtCore as QtCore
 
 from electrum import transaction
+from electrum.plugins import run_hook
+
 from util import MyTreeWidget
 
 class TxDialog(QDialog):
@@ -70,7 +72,7 @@ class TxDialog(QDialog):
 
         vbox.addStretch(1)
 
-        buttons = QHBoxLayout()
+        self.buttons = buttons = QHBoxLayout()
         vbox.addLayout( buttons )
 
         buttons.addStretch(1)
@@ -93,16 +95,25 @@ class TxDialog(QDialog):
         cancelButton.clicked.connect(lambda: self.done(0))
         buttons.addWidget(cancelButton)
         cancelButton.setDefault(True)
-        
+
+        b = QPushButton(_("Show QR code"))
+        b.clicked.connect(self.show_qr)
+        buttons.insertWidget(1,b)
         self.update()
 
+        run_hook('transaction_dialog', self)
 
+
+    def show_qr(self):
+        text = self.tx.raw.decode('hex')
+        try:
+            self.parent.show_qrcode(text, 'Transaction')
+        except Exception as e:
+            self.show_message(str(e))
 
 
     def sign(self):
-        tx_dict = self.tx.as_dict()
-        input_info = json.loads(tx_dict["input_info"])
-        self.parent.sign_raw_transaction(self.tx, input_info)
+        self.parent.sign_raw_transaction(self.tx)
         self.update()
 
 
@@ -121,7 +132,7 @@ class TxDialog(QDialog):
         is_relevant, is_mine, v, fee = self.wallet.get_tx_value(self.tx)
 
         if self.tx.is_complete():
-            status = _("Status: Signed")
+            status = _("Signed")
             self.sign_button.hide()
             tx_hash = self.tx.hash()
 
@@ -131,14 +142,15 @@ class TxDialog(QDialog):
                     time_str = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
                 else:
                     time_str = 'pending'
-                status = _("Status: %d confirmations")%conf
+                status = _("%d confirmations")%conf
                 self.broadcast_button.hide()
             else:
                 time_str = None
                 conf = 0
                 self.broadcast_button.show()
         else:
-            status = _("Status: Unsigned")
+            s, r = self.tx.signature_count()
+            status = _("Unsigned") if s == 0 else _('Partially signed (%d/%d)'%(s,r))
             time_str = None
             if not self.wallet.is_watching_only():
                 self.sign_button.show()
@@ -148,14 +160,13 @@ class TxDialog(QDialog):
             tx_hash = 'unknown'
 
         self.tx_hash_e.setText(tx_hash)
-        self.status_label.setText(status)
+        self.status_label.setText(_('Status:') + ' ' + status)
 
         if time_str is not None:
             self.date_label.setText(_("Date: %s")%time_str)
             self.date_label.show()
         else:
             self.date_label.hide()
-
 
         # if we are not synchronized, we cannot tell
         if self.parent.network is None or not self.parent.network.is_running() or not self.parent.network.is_connected():
@@ -176,14 +187,6 @@ class TxDialog(QDialog):
         else:
             self.amount_label.setText(_("Transaction unrelated to your wallet"))
 
-
-    def exec_menu(self, position,l):
-        item = l.itemAt(position)
-        if not item: return
-        addr = unicode(item.text(0))
-        menu = QMenu()
-        menu.addAction(_("Copy to clipboard"), lambda: self.parent.app.clipboard().setText(addr))
-        menu.exec_(l.viewport().mapToGlobal(position))
 
 
     def add_io(self, vbox):

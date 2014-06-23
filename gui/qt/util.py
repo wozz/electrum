@@ -3,7 +3,8 @@ from PyQt4.QtGui import *
 from PyQt4.QtCore import *
 import os.path
 import time
-
+import traceback
+import sys
 import threading
 
 class WaitingDialog(QThread):
@@ -21,11 +22,20 @@ class WaitingDialog(QThread):
         self.d.show()
 
     def run(self):
-        self.result = self.run_task()
+        self.error = None
+        try:
+            self.result = self.run_task()
+        except Exception as e:
+            traceback.print_exc(file=sys.stdout)
+            self.error = str(e)
         self.d.emit(SIGNAL('done'))
 
     def close(self):
         self.d.accept()
+        if self.error:
+            QMessageBox.warning(self.parent, _('Error'), self.error, _('OK'))
+            return
+
         if self.on_complete:
             self.on_complete(*self.result)
 
@@ -56,17 +66,19 @@ class HelpButton(QPushButton):
     def __init__(self, text):
         QPushButton.__init__(self, '?')
         self.help_text = text
-        self.alt_text = None
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedWidth(20)
-        self.clicked.connect(lambda: QMessageBox.information(self, 'Help', self.get_text(), 'OK') )
+        self.alt = None
+        self.clicked.connect(self.onclick)
 
-    def get_text(self):
-        return self.alt_text if self.alt_text else self.help_text
+    def set_alt(self, func):
+        self.alt = func
 
-    def set_alt(self, t):
-        self.alt_text = t
-
+    def onclick(self):
+        if self.alt:
+            apply(self.alt)
+        else:
+            QMessageBox.information(self, 'Help', self.help_text, 'OK')
 
 
 
@@ -96,6 +108,7 @@ def ok_cancel_buttons(dialog, ok_label=_("OK") ):
     return hbox
 
 def text_dialog(parent, title, label, ok_label, default=None):
+    from qrtextedit import QRTextEdit
     dialog = QDialog(parent)
     dialog.setMinimumWidth(500)
     dialog.setWindowTitle(title)
@@ -103,7 +116,7 @@ def text_dialog(parent, title, label, ok_label, default=None):
     l = QVBoxLayout()
     dialog.setLayout(l)
     l.addWidget(QLabel(label))
-    txt = QTextEdit()
+    txt = QRTextEdit()
     if default:
         txt.setText(default)
     l.addWidget(txt)

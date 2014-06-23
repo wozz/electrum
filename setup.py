@@ -56,7 +56,7 @@ data_files += [
 setup(
     name="Electrum",
     version=version.ELECTRUM_VERSION,
-    install_requires=['slowaes', 'ecdsa>=0.9', 'pbkdf2'],
+    install_requires=['slowaes', 'ecdsa>=0.9', 'pbkdf2', 'requests', 'pyasn1', 'pyasn1-modules', 'tlslite>=0.4.5', 'qrcode'],
     package_dir={
         'electrum': 'lib',
         'electrum_gui': 'gui',
@@ -79,7 +79,6 @@ setup(
         'electrum.paymentrequest',
         'electrum.paymentrequest_pb2',
         'electrum.plugins',
-        'electrum.pyqrnative',
         'electrum.simple_config',
         'electrum.socks',
         'electrum.synchronizer',
@@ -89,6 +88,7 @@ setup(
         'electrum.version',
         'electrum.wallet',
         'electrum.wallet_bitkey',
+        'electrum.x509',
         'electrum_gui.gtk',
         'electrum_gui.qt.__init__',
         'electrum_gui.qt.amountedit',
@@ -100,6 +100,7 @@ setup(
         'electrum_gui.qt.main_window',
         'electrum_gui.qt.network_dialog',
         'electrum_gui.qt.password_dialog',
+        'electrum_gui.qt.paytoedit',
         'electrum_gui.qt.qrcodewidget',
         'electrum_gui.qt.receiving_widget',
         'electrum_gui.qt.seed_dialog',
@@ -117,9 +118,9 @@ setup(
         'electrum_plugins.virtualkeyboard',
     ],
     description="Lightweight Bitcoin Wallet",
-    author="ecdsa",
-    author_email="ecdsa@github",
+    author="Thomas Voegtlin",
+    author_email="thomasv1@gmx.de",
     license="GNU GPLv3",
-    url="http://electrum.org",
+    url="https://electrum.org",
     long_description="""Lightweight Bitcoin Wallet"""
 )

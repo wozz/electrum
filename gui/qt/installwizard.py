@@ -19,7 +19,7 @@ from electrum.plugins import run_hook
 MSG_ENTER_ANYTHING    = _("Please enter a wallet seed, a master public key, a list of Bitcoin addresses, or a list of private keys")
 MSG_SHOW_MPK          = _("This is your master public key")
 MSG_ENTER_MPK         = _("Please enter your master public key")
-MSG_ENTER_COLD_MPK    = _("Please enter the master public key of your cosigning wallet")
+MSG_ENTER_COLD_MPK    = _("Please enter the master public key of your cosigner wallet")
 MSG_ENTER_SEED_OR_MPK = _("Please enter a wallet seed, or master public key")
 MSG_VERIFY_SEED       = _("Your seed is important!") + "\n" + _("To make sure that you have properly saved your seed, please retype it here.")
 
@@ -132,12 +132,12 @@ class InstallWizard(QDialog):
  
         vbox.addLayout(grid2)
         vbox.addStretch(1)
-        vbox.addLayout(ok_cancel_buttons(self, _('Next')))
-
+        hbox, button = ok_cancel_buttons2(self, _('Next'))
+        vbox.addLayout(hbox)
         self.set_layout(vbox)
-
         self.show()
         self.raise_()
+        button.setDefault(True)
 
         if not self.exec_():
             return None, None

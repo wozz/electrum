@@ -18,6 +18,7 @@
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
+from qrtextedit import QRTextEdit
 
 import re
 from decimal import Decimal
@@ -29,17 +30,22 @@ RE_ALIAS = '(.*?)\s*\<([1-9A-HJ-NP-Za-km-z]{26,})\>'
 frozen_style = "QWidget { background-color:none; border:none;}"
 normal_style = "QTextEdit { }"
 
-class PayToEdit(QTextEdit):
+class PayToEdit(QRTextEdit):
 
-    def __init__(self, amount_edit):
-        QTextEdit.__init__(self)
-        self.amount_edit = amount_edit
+    def __init__(self, win):
+        QRTextEdit.__init__(self)
+        self.win = win
+        self.amount_edit = win.amount_e
         self.document().contentsChanged.connect(self.update_size)
         self.heightMin = 0
         self.heightMax = 150
         self.setMinimumHeight(27)
         self.setMaximumHeight(27)
         self.c = None
+        self.textChanged.connect(self.check_text)
+        self.outputs = []
+        self.is_pr = False
+        self.scan_f = self.win.pay_from_URI
 
     def lock_amount(self):
         self.amount_edit.setFrozen(True)
@@ -52,7 +58,12 @@ class PayToEdit(QTextEdit):
         self.setStyleSheet(frozen_style if b else normal_style)
 
     def setGreen(self):
-        self.setStyleSheet("QWidget { background-color:#00ff00;}")
+        self.is_pr = True
+        self.setStyleSheet("QWidget { background-color:#80ff80;}")
+
+    def setExpired(self):
+        self.is_pr = True
+        self.setStyleSheet("QWidget { background-color:#ffcccc;}")
 
     def parse_address_and_amount(self, line):
         x, y = line.split(',')
@@ -75,16 +86,21 @@ class PayToEdit(QTextEdit):
 
 
     def check_text(self):
+        if self.is_pr:
+            return
+
         # filter out empty lines
         lines = filter( lambda x: x, self.lines())
         outputs = []
         total = 0
 
+        self.payto_address = None
+
         if len(lines) == 1:
             try:
                 self.payto_address = self.parse_address(lines[0])
             except:
-                self.payto_address = None
+                pass
 
             if self.payto_address:
                 self.unlock_amount()
@@ -113,25 +129,16 @@ class PayToEdit(QTextEdit):
             self.unlock_amount()
 
 
-
     def get_outputs(self):
-
         if self.payto_address:
-            
-            if not bitcoin.is_address(self.payto_address):
-                QMessageBox.warning(self, _('Error'), _('Invalid Bitcoin Address') + ':\n' + to_address, _('OK'))
-                return
-
             try:
                 amount = self.amount_edit.get_amount()
-            except Exception:
-                QMessageBox.warning(self, _('Error'), _('Invalid Amount'), _('OK'))
-                return
+            except:
+                amount = None
 
-            outputs = [(self.payto_address, amount)]
-            return outputs
+            self.outputs = [(self.payto_address, amount)]
 
-        return self.outputs
+        return self.outputs[:]
 
 
     def lines(self):
@@ -165,7 +172,6 @@ class PayToEdit(QTextEdit):
         tc.movePosition(QTextCursor.EndOfWord)
         tc.insertText(completion.right(extra))
         self.setTextCursor(tc)
-        self.check_text()
  
 
     def textUnderCursor(self):
@@ -175,6 +181,9 @@ class PayToEdit(QTextEdit):
 
 
     def keyPressEvent(self, e):
+        if self.isReadOnly():
+            return
+
         if self.c.popup().isVisible():
             if e.key() in [Qt.Key_Enter, Qt.Key_Return]:
                 e.ignore()
@@ -192,7 +201,6 @@ class PayToEdit(QTextEdit):
 
         if not self.c or not isShortcut:
             QTextEdit.keyPressEvent(self, e)
-            self.check_text()
 
 
         ctrlOrShift = e.modifiers() and (Qt.ControlModifier or Qt.ShiftModifier)
