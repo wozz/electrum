@@ -96,26 +96,26 @@ class TxDialog(QDialog):
         buttons.addWidget(cancelButton)
         cancelButton.setDefault(True)
 
-        b = QPushButton(_("Show QR code"))
+        b = QPushButton()
+        b.setIcon(QIcon(":icons/qrcode.png"))
         b.clicked.connect(self.show_qr)
         buttons.insertWidget(1,b)
-        self.update()
 
         run_hook('transaction_dialog', self)
+        
+        self.update()
 
 
     def show_qr(self):
+        text = self.tx.raw.decode('hex')
         try:
-            json_text = json.dumps(self.tx.as_dict()).replace(' ', '')
-            self.parent.show_qrcode(json_text, 'Transaction')
+            self.parent.show_qrcode(text, 'Transaction')
         except Exception as e:
             self.show_message(str(e))
 
 
     def sign(self):
-        tx_dict = self.tx.as_dict()
-        input_info = json.loads(tx_dict["input_info"])
-        self.parent.sign_raw_transaction(self.tx, input_info)
+        self.parent.sign_raw_transaction(self.tx)
         self.update()
 
 
@@ -132,10 +132,13 @@ class TxDialog(QDialog):
     def update(self):
 
         is_relevant, is_mine, v, fee = self.wallet.get_tx_value(self.tx)
+        if self.wallet.can_sign(self.tx):
+            self.sign_button.show()
+        else:
+            self.sign_button.hide()
 
         if self.tx.is_complete():
-            status = _("Status: Signed")
-            self.sign_button.hide()
+            status = _("Signed")
             tx_hash = self.tx.hash()
 
             if tx_hash in self.wallet.transactions.keys():
@@ -144,24 +147,21 @@ class TxDialog(QDialog):
                     time_str = datetime.datetime.fromtimestamp(timestamp).isoformat(' ')[:-3]
                 else:
                     time_str = 'pending'
-                status = _("Status: %d confirmations")%conf
+                status = _("%d confirmations")%conf
                 self.broadcast_button.hide()
             else:
                 time_str = None
                 conf = 0
                 self.broadcast_button.show()
         else:
-            status = _("Status: Unsigned")
+            s, r = self.tx.signature_count()
+            status = _("Unsigned") if s == 0 else _('Partially signed (%d/%d)'%(s,r))
             time_str = None
-            if not self.wallet.is_watching_only():
-                self.sign_button.show()
-            else:
-                self.sign_button.hide()
             self.broadcast_button.hide()
             tx_hash = 'unknown'
 
         self.tx_hash_e.setText(tx_hash)
-        self.status_label.setText(status)
+        self.status_label.setText(_('Status:') + ' ' + status)
 
         if time_str is not None:
             self.date_label.setText(_("Date: %s")%time_str)
@@ -187,6 +187,8 @@ class TxDialog(QDialog):
                 self.amount_label.setText(_("Amount received:")+' %s'% self.parent.format_amount(v) + ' ' + self.parent.base_unit())
         else:
             self.amount_label.setText(_("Transaction unrelated to your wallet"))
+
+        run_hook('transaction_dialog_update', self)
 
 
 
