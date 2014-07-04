@@ -40,6 +40,7 @@ from electrum import Transaction
 from electrum import mnemonic
 from electrum import util, bitcoin, commands, Interface, Wallet
 from electrum import SimpleConfig, Wallet, WalletStorage
+from electrum import Imported_Wallet
 
 from amountedit import AmountEdit, BTCAmountEdit, MyLineEdit
 from network_dialog import NetworkDialog
@@ -443,9 +444,14 @@ class ElectrumWindow(QMainWindow):
 
 
     def base_unit(self):
-        assert self.decimal_point in [5,8]
-        return "BTC" if self.decimal_point == 8 else "mBTC"
-
+        assert self.decimal_point in [2, 5, 8]
+        if self.decimal_point == 2:
+            return 'bits'
+        if self.decimal_point == 5:
+            return 'mBTC'
+        if self.decimal_point == 8:
+            return 'BTC'
+        raise Exception('Unknown base unit')
 
     def update_status(self):
         if self.network is None or not self.network.is_running():
@@ -681,7 +687,7 @@ class ElectrumWindow(QMainWindow):
         self.save_request_button.clicked.connect(self.save_payment_request)
         grid.addWidget(self.save_request_button, 3, 1)
         clear_button = QPushButton(_('New'))
-        clear_button.clicked.connect(self.clear_receive_tab)
+        clear_button.clicked.connect(self.new_receive_address)
         grid.addWidget(clear_button, 3, 2)
         grid.setRowStretch(4, 1)
 
@@ -739,6 +745,22 @@ class ElectrumWindow(QMainWindow):
         self.wallet.storage.put('receive_requests', self.receive_requests)
         self.update_receive_tab()
 
+    def new_receive_address(self):
+        domain = self.wallet.get_account_addresses(self.current_account, include_change=False)
+        for addr in domain:
+            if not self.wallet.address_is_old(addr) and addr not in self.receive_requests.keys():
+                break
+        else:
+            if isinstance(self.wallet, Imported_Wallet):
+                self.show_message(_('No more addresses in your wallet.'))
+                return
+            if not self.question(_("Warning: The next address will not be recovered automatically if you restore your wallet from seed; you may need to add it manually.\n\nThis occurs because you have too many unused addresses in your wallet. To avoid this situation, use the existing addresses first.\n\nCreate anyway?")):
+                return
+            addr = self.wallet.create_new_address(self.current_account, False)
+        self.receive_address_e.setText(addr)
+        self.receive_message_e.setText('')
+        self.receive_amount_e.setAmount(None)
+
     def clear_receive_tab(self):
         self.receive_requests = self.wallet.storage.get('receive_requests',{}) 
         domain = self.wallet.get_account_addresses(self.current_account, include_change=False)
@@ -746,7 +768,7 @@ class ElectrumWindow(QMainWindow):
             if not self.wallet.address_is_old(addr) and addr not in self.receive_requests.keys():
                 break
         else:
-            addr = ""
+            addr = ''
         self.receive_address_e.setText(addr)
         self.receive_message_e.setText('')
         self.receive_amount_e.setAmount(None)
@@ -970,7 +992,12 @@ class ElectrumWindow(QMainWindow):
             return
 
         for addr, x in outputs:
-            if addr is None or not bitcoin.is_address(addr):
+            if addr is None:
+                QMessageBox.warning(self, _('Error'), _('Bitcoin Address is None'), _('OK'))
+                return
+            if addr.startswith('OP_RETURN:'):
+                continue
+            if not bitcoin.is_address(addr):
                 QMessageBox.warning(self, _('Error'), _('Invalid Bitcoin Address'), _('OK'))
                 return
             if x is None:
@@ -1026,6 +1053,8 @@ class ElectrumWindow(QMainWindow):
 
         # sign the tx
         def sign_thread():
+            if self.wallet.is_watching_only():
+                return tx
             keypairs = {}
             try:
                 self.wallet.add_keypairs(tx, keypairs, password)
@@ -2464,7 +2493,7 @@ class ElectrumWindow(QMainWindow):
         if not self.config.is_modifiable('fee_per_kb'):
             for w in [fee_e, fee_label]: w.setEnabled(False)
 
-        units = ['BTC', 'mBTC']
+        units = ['BTC', 'mBTC', 'bits']
         unit_label = QLabel(_('Base unit') + ':')
         grid.addWidget(unit_label, 3, 0)
         unit_combo = QComboBox()
@@ -2535,7 +2564,14 @@ class ElectrumWindow(QMainWindow):
 
         unit_result = units[unit_combo.currentIndex()]
         if self.base_unit() != unit_result:
-            self.decimal_point = 8 if unit_result == 'BTC' else 5
+            if unit_result == 'BTC':
+                self.decimal_point = 8
+            elif unit_result == 'mBTC':
+                self.decimal_point = 5
+            elif unit_result == 'bits':
+                self.decimal_point = 2
+            else:
+                raise Exception('Unknown base unit')
             self.config.set_key('decimal_point', self.decimal_point, True)
             self.update_history_tab()
             self.update_status()

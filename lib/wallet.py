@@ -350,7 +350,7 @@ class Abstract_Wallet:
         raise Exception("Address not found", address)
 
     def getpubkeys(self, addr):
-        assert is_valid(addr) and self.is_mine(addr)
+        assert is_address(addr) and self.is_mine(addr)
         account, sequence = self.get_address_index(addr)
         a = self.accounts[account]
         return a.get_pubkeys( sequence )
@@ -547,7 +547,7 @@ class Abstract_Wallet:
 
     def get_account_addresses(self, a, include_change=True):
         if a is None:
-            o = self.addresses(True)
+            o = self.addresses(include_change)
         elif a in self.accounts:
             ac = self.accounts[a]
             o = ac.get_addresses(0)
@@ -779,7 +779,9 @@ class Abstract_Wallet:
 
     def make_unsigned_transaction(self, outputs, fee=None, change_addr=None, domain=None, coins=None ):
         for address, x in outputs:
-            assert is_valid(address), "Address " + address + " is invalid!"
+            if address.startswith('OP_RETURN:'):
+                continue
+            assert is_address(address), "Address " + address + " is invalid!"
         amount = sum( map(lambda x:x[1], outputs) )
         inputs, total, fee = self.choose_tx_inputs( amount, fee, len(outputs), domain, coins )
         if not inputs:
@@ -1139,11 +1141,15 @@ class Deterministic_Wallet(Abstract_Wallet):
                     if n > nmax: nmax = n
         return nmax + 1
 
-    def create_new_address(self, account, for_change):
+    def create_new_address(self, account=None, for_change=0):
+        if account is None:
+            account = self.default_account()
         address = account.create_new_address(for_change)
         self.history[address] = []
-        self.synchronizer.add(address)
+        if self.synchronizer:
+            self.synchronizer.add(address)
         self.save_accounts()
+        return address
 
     def synchronize_sequence(self, account, for_change):
         limit = self.gap_limit_for_change if for_change else self.gap_limit
@@ -1251,14 +1257,23 @@ class Deterministic_Wallet(Abstract_Wallet):
                 return False
         return True
 
+    def get_action(self):
+        if not self.get_master_public_key():
+            return 'create_seed'
+        if not self.accounts:
+            return 'create_accounts'
+
 
 class NewWallet(Deterministic_Wallet):
 
     def __init__(self, storage):
         Deterministic_Wallet.__init__(self, storage)
 
+    def default_account(self):
+        return self.accounts["m/0'"]
+
     def is_watching_only(self):
-        return self.master_private_keys is {}
+        return not bool(self.master_private_keys)
 
     def can_create_accounts(self):
         return 'm/' in self.master_private_keys.keys()
@@ -1303,7 +1318,8 @@ class NewWallet(Deterministic_Wallet):
 
     def create_accounts(self, password):
         # First check the password is valid (this raises if it isn't).
-        self.check_password(password)
+        if not self.is_watching_only():
+            self.check_password(password)
         self.create_account('Main account', password)
 
     def add_master_public_key(self, name, xpub):
@@ -1401,13 +1417,16 @@ class Wallet_2of2(NewWallet):
         NewWallet.__init__(self, storage)
         self.storage.put('wallet_type', '2of2', True)
 
+    def default_account(self):
+        return self.accounts['m/']
+
     def can_create_accounts(self):
         return False
 
     def can_import(self):
         return False
 
-    def create_account(self):
+    def create_account(self, name, password):
         xpub1 = self.master_public_keys.get("m/")
         xpub2 = self.master_public_keys.get("cold/")
         account = BIP32_Account_2of2({'xpub':xpub1, 'xpub2':xpub2})
@@ -1422,9 +1441,11 @@ class Wallet_2of2(NewWallet):
         xpub1 = self.master_public_keys.get("m/")
         xpub2 = self.master_public_keys.get("cold/")
         if xpub1 is None:
-            return 'create_2of2_1'
+            return 'create_seed'
         if xpub2 is None:
-            return 'create_2of2_2'
+            return 'add_cosigner'
+        if not self.accounts:
+            return 'create_accounts'
 
 
 class Wallet_2of3(Wallet_2of2):
@@ -1434,7 +1455,7 @@ class Wallet_2of3(Wallet_2of2):
         Wallet_2of2.__init__(self, storage)
         self.storage.put('wallet_type', '2of3', True)
 
-    def create_account(self):
+    def create_account(self, name, password):
         xpub1 = self.master_public_keys.get("m/")
         xpub2 = self.master_public_keys.get("cold/")
         xpub3 = self.master_public_keys.get("remote/")
@@ -1451,16 +1472,18 @@ class Wallet_2of3(Wallet_2of2):
         xpub1 = self.master_public_keys.get("m/")
         xpub2 = self.master_public_keys.get("cold/")
         xpub3 = self.master_public_keys.get("remote/")
-        # fixme: we use order of creation
-        if xpub2 and xpub1 is None:
-            return 'create_2fa_2'
         if xpub1 is None:
-            return 'create_2of3_1'
+            return 'create_seed'
         if xpub2 is None or xpub3 is None:
-            return 'create_2of3_2'
+            return 'add_two_cosigners'
+        if not self.accounts:
+            return 'create_accounts'
 
 
 class OldWallet(Deterministic_Wallet):
+
+    def default_account(self):
+        return self.accounts[0]
 
     def make_seed(self):
         import mnemonic
@@ -1535,20 +1558,18 @@ class Wallet(object):
 
     def __new__(self, storage):
         config = storage.config
-        if config.get('bitkey', False):
-            # if user requested support for Bitkey device,
-            # import Bitkey driver
-            from wallet_bitkey import WalletBitkey
-            return WalletBitkey(config)
 
-        if storage.get('wallet_type') == '2of2':
-            return Wallet_2of2(storage)
+        self.wallet_types = [ 
+            ('standard', ("Standard wallet"),          OldWallet), 
+            ('imported', ("Imported wallet"),          Imported_Wallet), 
+            ('2of2',     ("Multisig wallet (2 of 2)"), Wallet_2of2),
+            ('2of3',     ("Multisig wallet (2 of 3)"), Wallet_2of3)
+        ]
+        run_hook('add_wallet_types', self.wallet_types)
 
-        if storage.get('wallet_type') == '2of3':
-            return Wallet_2of3(storage)
-
-        if storage.get('wallet_type') == 'imported':
-            return Imported_Wallet(storage)
+        for t, l, WalletClass in self.wallet_types:
+            if t == storage.get('wallet_type'):
+                return WalletClass(storage)
 
         if not storage.file_exists:
             seed_version = NEW_SEED_VERSION if config.get('bip32') is True else OLD_SEED_VERSION
