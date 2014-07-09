@@ -648,7 +648,7 @@ class Abstract_Wallet:
 
             # Insert the change output at a random position in the outputs
             posn = random.randint(0, len(outputs))
-            outputs[posn:posn] = [( change_addr,  change_amount)]
+            outputs[posn:posn] = [( 'address', change_addr,  change_amount)]
         return outputs
 
     def get_history(self, address):
@@ -1252,7 +1252,7 @@ class Deterministic_Wallet(Abstract_Wallet):
             return False
         prev_addresses = prev_addresses[max(0, i - limit):]
         for addr in prev_addresses:
-            if self.address_is_old(addr):
+            if self.history.get(addr):
                 return False
         return True
 
