@@ -380,19 +380,15 @@ class Abstract_Wallet(object):
 
     def signrawtransaction(self, tx, private_keys, password):
         # check that the password is correct. This will raise if it's not.
-        self.get_seed(password)
-
+        self.check_password(password)
         # build a list of public/private keys
         keypairs = {}
-
         # add private keys from parameter
         for sec in private_keys:
             pubkey = public_key_from_private_key(sec)
             keypairs[ pubkey ] = sec
-
         # add private_keys
         self.add_keypairs(tx, keypairs, password)
-
         # sign the transaction
         self.sign_transaction(tx, keypairs, password)
 
@@ -820,11 +816,12 @@ class Abstract_Wallet(object):
             imported_account.update_password(old_password, new_password)
             self.save_accounts()
 
-        for k, v in self.master_private_keys.items():
-            b = pw_decode(v, old_password)
-            c = pw_encode(b, new_password)
-            self.master_private_keys[k] = c
-        self.storage.put('master_private_keys', self.master_private_keys, True)
+        if hasattr(self, 'master_private_keys'):
+            for k, v in self.master_private_keys.items():
+                b = pw_decode(v, old_password)
+                c = pw_encode(b, new_password)
+                self.master_private_keys[k] = c
+            self.storage.put('master_private_keys', self.master_private_keys, True)
 
         self.use_encryption = (new_password != None)
         self.storage.put('use_encryption', self.use_encryption,True)
