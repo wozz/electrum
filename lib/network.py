@@ -85,7 +85,6 @@ class Network(threading.Thread):
         self.blockchain = Blockchain(self.config, self)
         self.interfaces = {}
         self.queue = Queue.Queue()
-        self.callbacks = {}
         self.protocol = self.config.get('protocol','s')
         self.running = False
 
@@ -110,13 +109,13 @@ class Network(threading.Thread):
         if not os.path.exists(dir_path):
             os.mkdir(dir_path)
 
-        # default subscriptions
-        self.subscriptions = {}
-        self.subscriptions[self.on_banner] = [('server.banner',[])]
-        self.subscriptions[self.on_peers] = [('server.peers.subscribe',[])]
-        self.pending_transactions_for_notifications = []
+        # address subscriptions and cached results
+        self.addresses = {} 
 
         self.connection_status = 'connecting'
+
+        self.requests_queue = Queue.Queue()
+
 
     def get_server_height(self):
         return self.heights.get(self.default_server,0)
@@ -137,46 +136,32 @@ class Network(threading.Thread):
         return self.interface and self.interface.is_connected
 
     def is_up_to_date(self):
+        raise
         return self.interface.is_up_to_date()
 
     def send_subscriptions(self):
-        for cb, sub in self.subscriptions.items():
-            self.interface.send(sub, cb)
-
-    def subscribe(self, messages, callback):
-        with self.lock:
-            if self.subscriptions.get(callback) is None: 
-                self.subscriptions[callback] = []
-            for message in messages:
-                if message not in self.subscriptions[callback]:
-                    self.subscriptions[callback].append(message)
-
-        if self.is_connected():
-            self.interface.send( messages, callback )
+        for addr in self.addresses:
+            self.interface.send_request({'method':'blockchain.address.subscribe', 'params':[addr]})
+        self.interface.send_request({'method':'server.banner','params':[]})
+        self.interface.send_request({'method':'server.peers.subscribe','params':[]})
 
 
-    def send(self, messages, callback):
-        if self.is_connected():
-            self.interface.send( messages, callback )
-            return True
-        else:
-            return False
+    def get_status_value(self, key):
+        if key == 'status':
+            value = self.connection_status
+        elif key == 'banner':
+            value = self.banner
+        elif key == 'updated':
+            value = (self.get_local_height(), self.get_server_height())
+        elif key == 'servers':
+            value = self.get_servers()
+        elif key == 'interfaces':
+            value = self.get_interfaces()
+        return value
 
-
-    def register_callback(self, event, callback):
-        with self.lock:
-            if not self.callbacks.get(event):
-                self.callbacks[event] = []
-            self.callbacks[event].append(callback)
-
-
-    def trigger_callback(self, event):
-        # note: this method is overwritten by daemon
-        with self.lock:
-            callbacks = self.callbacks.get(event,[])[:]
-        if callbacks:
-            [callback() for callback in callbacks]
-
+    def trigger_callback(self, key):
+        value = self.get_status_value(key)
+        self.response_queue.put({'method':'network.status', 'params':[key, value]})
 
     def random_server(self):
         choice_list = []
@@ -222,7 +207,7 @@ class Network(threading.Thread):
         i = interface.Interface(server, self.config)
         self.pending_servers.add(server)
         i.start(self.queue)
-        return i 
+        return i
 
     def start_random_interface(self):
         server = self.random_server()
@@ -234,8 +219,14 @@ class Network(threading.Thread):
         for i in range(self.num_server):
             self.start_random_interface()
             
-    def start(self):
+    def start(self, response_queue):
+        self.running = True
+        self.response_queue = response_queue
         self.start_interfaces()
+        t = threading.Thread(target=self.process_requests_thread)
+        t.daemon = True
+        t.start()
+        self.blockchain.start()
         threading.Thread.start(self)
 
     def set_parameters(self, host, port, protocol, proxy, auto_connect):
@@ -321,24 +312,73 @@ class Network(threading.Thread):
                 print_error( "Server is lagging", blockchain_height, self.get_server_height())
                 if self.config.get('auto_cycle'):
                     self.set_server(i.server)
-        
         self.trigger_callback('updated')
 
 
-    def run(self):
-        self.blockchain.start()
+    def process_response(self, i, response):
+        method = response['method']
+        if method == 'blockchain.address.subscribe':
+            self.on_address(i, response)
+        elif method == 'blockchain.headers.subscribe':
+            self.on_header(i, response)
+        elif method == 'server.peers.subscribe':
+            self.on_peers(i, response)
+        elif method == 'server.banner':
+            self.on_banner(i, response)
+        else:
+            self.response_queue.put(response)
 
-        with self.lock:
-            self.running = True
-
+    def process_requests_thread(self):
         while self.is_running():
             try:
-                i = self.queue.get(timeout = 30 if self.interfaces else 3)
+                request = self.requests_queue.get(timeout=0.1)
+            except Queue.Empty:
+                continue
+            self.process_request(request)
+
+    def process_request(self, request):
+        method = request['method']
+        params = request['params']
+        _id = request['id']
+
+        if method.startswith('network.'):
+            out = {'id':_id}
+            try:
+                f = getattr(self, method[8:])
+            except AttributeError:
+                out['error'] = "unknown method"
+            try:
+                out['result'] = f(*params)
+            except BaseException as e:
+                out['error'] = str(e)
+                print_error("network error", str(e))
+
+            self.response_queue.put(out)
+            return
+
+        if method == 'blockchain.address.subscribe':
+            addr = params[0]
+            if addr in self.addresses:
+                self.response_queue.put({'id':_id, 'result':self.addresses[addr]}) 
+                return
+
+        self.interface.send_request(request)
+
+
+    def run(self):
+        while self.is_running():
+            try:
+                i, response = self.queue.get(0.1) #timeout = 30 if self.interfaces else 3)
             except Queue.Empty:
                 if len(self.interfaces) < self.num_server:
                     self.start_random_interface()
                 continue
+            
+            if response is not None:
+                self.process_response(i, response)
+                continue
 
+            # if response is None it is a notification about the interface
             if i.server in self.pending_servers:
                 self.pending_servers.remove(i.server)
 
@@ -346,7 +386,7 @@ class Network(threading.Thread):
                 #if i.server in self.interfaces: raise
                 self.interfaces[i.server] = i
                 self.add_recent_server(i)
-                i.send([ ('blockchain.headers.subscribe',[])], self.on_header)
+                i.send_request({'method':'blockchain.headers.subscribe','params':[]})
                 if i == self.interface:
                     print_error('sending subscriptions to', self.interface.server)
                     self.send_subscriptions()
@@ -382,9 +422,7 @@ class Network(threading.Thread):
             if self.server_is_lagging() and self.config.get('auto_cycle'):
                 print_error( "Server lagging, stopping interface")
                 self.stop_interface()
-
             self.trigger_callback('updated')
-
 
     def on_peers(self, i, r):
         if not r: return
@@ -395,11 +433,19 @@ class Network(threading.Thread):
         self.banner = r.get('result')
         self.trigger_callback('banner')
 
+    def on_address(self, i, r):
+        addr = r.get('params')[0]
+        result = r.get('result')
+        self.addresses[addr] = result
+        self.response_queue.put(r)
+
     def stop(self):
-        with self.lock: self.running = False
+        with self.lock:
+            self.running = False
 
     def is_running(self):
-        with self.lock: return self.running
+        with self.lock:
+            return self.running
 
     
     def synchronous_get(self, requests, timeout=100000000):
