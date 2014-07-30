@@ -23,6 +23,8 @@ DEFAULT_SERVERS = {
     'electrum.stepkrav.pw':DEFAULT_PORTS,
 }
 
+DISCONNECTED_RETRY_INTERVAL = 60
+
 
 def parse_servers(result):
     """ parse servers list into dict format"""
@@ -94,8 +96,10 @@ class Network(threading.Thread):
             self.default_server = pick_random_server(self.protocol)
 
         self.irc_servers = {} # returned by interface (list from irc)
-        self.pending_servers = set([])
+
         self.disconnected_servers = set([])
+        self.disconnected_time = time.time()
+
         self.recent_servers = self.config.get('recent_servers',[]) # successful connections
 
         self.banner = ''
@@ -111,9 +115,7 @@ class Network(threading.Thread):
 
         # address subscriptions and cached results
         self.addresses = {} 
-
         self.connection_status = 'connecting'
-
         self.requests_queue = Queue.Queue()
 
 
@@ -130,21 +132,16 @@ class Network(threading.Thread):
 
     def set_status(self, status):
         self.connection_status = status
-        self.trigger_callback('status')
+        self.notify('status')
 
     def is_connected(self):
         return self.interface and self.interface.is_connected
-
-    def is_up_to_date(self):
-        raise
-        return self.interface.is_up_to_date()
 
     def send_subscriptions(self):
         for addr in self.addresses:
             self.interface.send_request({'method':'blockchain.address.subscribe', 'params':[addr]})
         self.interface.send_request({'method':'server.banner','params':[]})
         self.interface.send_request({'method':'server.peers.subscribe','params':[]})
-
 
     def get_status_value(self, key):
         if key == 'status':
@@ -159,7 +156,7 @@ class Network(threading.Thread):
             value = self.get_interfaces()
         return value
 
-    def trigger_callback(self, key):
+    def notify(self, key):
         value = self.get_status_value(key)
         self.response_queue.put({'method':'network.status', 'params':[key, value]})
 
@@ -167,15 +164,12 @@ class Network(threading.Thread):
         choice_list = []
         l = filter_protocol(self.get_servers(), self.protocol)
         for s in l:
-            if s in self.pending_servers or s in self.disconnected_servers or s in self.interfaces.keys():
+            if s in self.disconnected_servers or s in self.interfaces.keys():
                 continue
             else:
                 choice_list.append(s)
         
         if not choice_list: 
-            if not self.interfaces:
-                # we are probably offline, retry later
-                self.disconnected_servers = set([])
             return
         
         server = random.choice( choice_list )
@@ -205,7 +199,8 @@ class Network(threading.Thread):
         if server in self.interfaces.keys():
             return
         i = interface.Interface(server, self.config)
-        self.pending_servers.add(server)
+        self.interfaces[i.server] = i
+        self.notify('interfaces')
         i.start(self.queue)
         return i
 
@@ -255,11 +250,16 @@ class Network(threading.Thread):
 
 
     def switch_to_random_interface(self):
-        if self.interfaces:
-            self.switch_to_interface(random.choice(self.interfaces.values()))
+        while self.interfaces:
+            i = random.choice(self.interfaces.values())
+            if i.is_connected:
+                self.switch_to_interface(i)
+                break
+            else:
+                self.interfaces.pop(i.server)
+                self.notify('interfaces')
 
     def switch_to_interface(self, interface):
-        assert not self.interface.is_connected
         server = interface.server
         print_error("switching to", server)
         self.interface = interface
@@ -312,7 +312,7 @@ class Network(threading.Thread):
                 print_error( "Server is lagging", blockchain_height, self.get_server_height())
                 if self.config.get('auto_cycle'):
                     self.set_server(i.server)
-        self.trigger_callback('updated')
+        self.notify('updated')
 
 
     def process_response(self, i, response):
@@ -368,10 +368,16 @@ class Network(threading.Thread):
     def run(self):
         while self.is_running():
             try:
-                i, response = self.queue.get(0.1) #timeout = 30 if self.interfaces else 3)
+                i, response = self.queue.get(timeout=0.1)
             except Queue.Empty:
+
                 if len(self.interfaces) < self.num_server:
                     self.start_random_interface()
+                if not self.interfaces:
+                    if time.time() - self.disconnected_time > DISCONNECTED_RETRY_INTERVAL:
+                        print_error('network: retrying connections')
+                        self.disconnected_servers = set([])
+                        self.disconnected_time = time.time()
                 continue
             
             if response is not None:
@@ -379,12 +385,8 @@ class Network(threading.Thread):
                 continue
 
             # if response is None it is a notification about the interface
-            if i.server in self.pending_servers:
-                self.pending_servers.remove(i.server)
 
             if i.is_connected:
-                #if i.server in self.interfaces: raise
-                self.interfaces[i.server] = i
                 self.add_recent_server(i)
                 i.send_request({'method':'blockchain.headers.subscribe','params':[]})
                 if i == self.interface:
@@ -395,6 +397,7 @@ class Network(threading.Thread):
                 self.disconnected_servers.add(i.server)
                 if i.server in self.interfaces:
                     self.interfaces.pop(i.server)
+                    self.notify('interfaces')
                 if i.server in self.heights:
                     self.heights.pop(i.server)
                 if i == self.interface:
@@ -403,6 +406,10 @@ class Network(threading.Thread):
 
             if not self.interface.is_connected and self.config.get('auto_cycle'):
                 self.switch_to_random_interface()
+
+        print_error("Network: Stopping interfaces")
+        for i in self.interfaces.values():
+            i.stop()
 
 
     def on_header(self, i, r):
@@ -422,16 +429,16 @@ class Network(threading.Thread):
             if self.server_is_lagging() and self.config.get('auto_cycle'):
                 print_error( "Server lagging, stopping interface")
                 self.stop_interface()
-            self.trigger_callback('updated')
+            self.notify('updated')
 
     def on_peers(self, i, r):
         if not r: return
         self.irc_servers = parse_servers(r.get('result'))
-        self.trigger_callback('servers')
+        self.notify('servers')
 
     def on_banner(self, i, r):
         self.banner = r.get('result')
-        self.trigger_callback('banner')
+        self.notify('banner')
 
     def on_address(self, i, r):
         addr = r.get('params')[0]
@@ -440,6 +447,7 @@ class Network(threading.Thread):
         self.response_queue.put(r)
 
     def stop(self):
+        print_error("stopping network")
         with self.lock:
             self.running = False
 
