@@ -137,7 +137,9 @@ class ElectrumWindow(QMainWindow):
 
         self.completions = QStringListModel()
 
-        self.tabs = tabs = QTabWidget(self)
+        self.widget = QWidget(self)
+
+        self.widget.tabs = tabs = QTabWidget(self)
         self.column_widths = self.config.get("column_widths_2", default_column_widths )
         tabs.addTab(self.create_history_tab(), _('History') )
         tabs.addTab(self.create_send_tab(), _('Send') )
@@ -148,7 +150,7 @@ class ElectrumWindow(QMainWindow):
         tabs.addTab(self.create_console_tab(), _('Console') )
         tabs.setMinimumSize(600, 400)
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setCentralWidget(tabs)
+        self.setCentralWidget(self.widget)
 
         g = self.config.get("winpos-qt",[100, 100, 840, 400])
         self.setGeometry(g[0], g[1], g[2], g[3])
@@ -812,7 +814,7 @@ class ElectrumWindow(QMainWindow):
     def receive_at(self, addr):
         if not bitcoin.is_address(addr):
             return
-        self.tabs.setCurrentIndex(2)
+        self.widget.tabs.setCurrentIndex(2)
         self.receive_address_e.setText(addr)
 
     def update_receive_tab(self):
@@ -1180,7 +1182,7 @@ class ElectrumWindow(QMainWindow):
 
 
     def prepare_for_payment_request(self):
-        self.tabs.setCurrentIndex(1)
+        self.widget.tabs.setCurrentIndex(1)
         self.payto_e.is_pr = True
         for e in [self.payto_e, self.amount_e, self.message_e]:
             e.setFrozen(True)
@@ -1233,7 +1235,7 @@ class ElectrumWindow(QMainWindow):
             QMessageBox.warning(self, _('Error'), _('Invalid bitcoin URI:') + '\n' + str(e), _('OK'))
             return
 
-        self.tabs.setCurrentIndex(1)
+        self.widget.tabs.setCurrentIndex(1)
 
         if not request_url:
             if label:
@@ -1483,14 +1485,14 @@ class ElectrumWindow(QMainWindow):
 
     def send_from_addresses(self, addrs):
         self.set_pay_from( addrs )
-        self.tabs.setCurrentIndex(1)
+        self.widget.tabs.setCurrentIndex(1)
 
 
     def payto(self, addr):
         if not addr: return
         label = self.wallet.labels.get(addr)
         m_addr = label + '  <' + addr + '>' if label else addr
-        self.tabs.setCurrentIndex(1)
+        self.widget.tabs.setCurrentIndex(1)
         self.payto_e.setText(m_addr)
         self.amount_e.setFocus()
 
@@ -1788,7 +1790,7 @@ class ElectrumWindow(QMainWindow):
         self.update_contacts_tab()
         self.update_history_tab()
         self.update_completions()
-        self.tabs.setCurrentIndex(3)
+        self.widget.tabs.setCurrentIndex(3)
 
 
     @protected
@@ -1818,7 +1820,7 @@ class ElectrumWindow(QMainWindow):
 
         self.wallet.create_pending_account(name, password)
         self.update_address_tab()
-        self.tabs.setCurrentIndex(3)
+        self.widget.tabs.setCurrentIndex(3)
 
 
 
