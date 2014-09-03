@@ -7,9 +7,11 @@ build/
 dist/
 *.egg/
 /electrum.py
+/electrum-*.py
 contrib/pyinstaller/
-Electrum.egg-info/
+*.egg-info/
 gui/qt/icons_rc.py
 locale/
 .devlocaltmp/
 *_trial_temp
+*build.sh
