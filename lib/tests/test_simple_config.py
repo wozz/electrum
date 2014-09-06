@@ -149,7 +149,7 @@ class Test_SimpleConfig(unittest.TestCase):
                               read_user_dir_function=read_user_dir)
         config.save_user_config()
         contents = None
-        with open(os.path.join(self.electrum_dir, "config"), "r") as f:
+        with open(os.path.join(self.electrum_dir, "config-testnet"), "r") as f:
             contents = f.read()
         result = ast.literal_eval(contents)
         self.assertEqual({"something": "a"}, result)
@@ -174,7 +174,7 @@ everything = 42
         os.remove(self.thefile)
 
     def test_read_system_config_file_does_not_exist(self):
-        somefile = "/foo/I/do/not/exist/electrum.conf"
+        somefile = "/foo/I/do/not/exist/electrum-testnet.conf"
         result = read_system_config(somefile)
         self.assertEqual({}, result)
 
@@ -214,7 +214,7 @@ class TestUserConfig(unittest.TestCase):
        self.assertEqual({}, result)
 
     def test_path_with_reprd_dict(self):
-        thefile = os.path.join(self.user_dir, "config")
+        thefile = os.path.join(self.user_dir, "config-testnet")
         payload = {"gap_limit": 5}
         with open(thefile, "w") as f:
             f.write(repr(payload))
@@ -232,7 +232,7 @@ class TestUserConfig(unittest.TestCase):
         class something(object):
             pass
 
-        thefile = os.path.join(self.user_dir, "config")
+        thefile = os.path.join(self.user_dir, "config-testnet")
         payload = something()
         with open(thefile, "w") as f:
             f.write(repr(payload))
