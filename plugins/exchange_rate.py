@@ -9,7 +9,7 @@ import threading
 import time
 import re
 from decimal import Decimal
-from electrum.plugins import BasePlugin
+from electrum.plugins import BasePlugin, hook
 from electrum.i18n import _
 from electrum_gui.qt.util import *
 from electrum_gui.qt.amountedit import AmountEdit
@@ -25,9 +25,14 @@ EXCHANGES = ["BitcoinAverage",
              "CaVirtEx",
              "Coinbase",
              "CoinDesk",
+             "itBit",
              "LocalBitcoins",
              "Winkdex"]
 
+EXCH_SUPPORT_HIST = [("CoinDesk", "USD"),
+                     ("Winkdex", "USD"),
+                     ("BitcoinVenezuela", "ARS"),
+                     ("BitcoinVenezuela", "VEF")]
 
 class Exchanger(threading.Thread):
 
@@ -40,7 +45,6 @@ class Exchanger(threading.Thread):
         self.query_rates = threading.Event()
         self.use_exchange = self.parent.config.get('use_exchange', "Blockchain")
         self.parent.exchanges = EXCHANGES
-        self.parent.currencies = ["EUR","GBP","USD","PLN"]
         self.parent.win.emit(SIGNAL("refresh_exchanges_combo()"))
         self.parent.win.emit(SIGNAL("refresh_currencies_combo()"))
         self.is_running = False
@@ -48,7 +52,7 @@ class Exchanger(threading.Thread):
     def get_json(self, site, get_string):
         try:
             connection = httplib.HTTPSConnection(site)
-            connection.request("GET", get_string)
+            connection.request("GET", get_string, headers={"User-Agent":"Electrum"})
         except Exception:
             raise
         resp = connection.getresponse()
@@ -68,12 +72,6 @@ class Exchanger(threading.Thread):
             quote_currencies = self.quote_currencies.copy()
         if quote_currency not in quote_currencies:
             return None
-        if self.use_exchange == "CoinDesk":
-            try:
-                resp_rate = self.get_json('api.coindesk.com', "/v1/bpi/currentprice/" + str(quote_currency) + ".json")
-            except Exception:
-                return
-            return btc_amount * decimal.Decimal(str(resp_rate["bpi"][str(quote_currency)]["rate_float"]))
         return btc_amount * decimal.Decimal(str(quote_currencies[quote_currency]))
 
     def stop(self):
@@ -92,6 +90,7 @@ class Exchanger(threading.Thread):
             "CaVirtEx": self.update_cv,
             "CoinDesk": self.update_cd,
             "Coinbase": self.update_cb,
+            "itBit": self.update_ib,
             "LocalBitcoins": self.update_lb,
             "Winkdex": self.update_wd,
         }
@@ -117,22 +116,43 @@ class Exchanger(threading.Thread):
         quote_currencies = {}
         for cur in resp_currencies:
             quote_currencies[str(cur["currency"])] = 0.0
+
+        current_cur = self.parent.config.get("currency", "EUR")
+        if current_cur in quote_currencies:
+            try:
+                resp_rate = self.get_json('api.coindesk.com', "/v1/bpi/currentprice/" + str(current_cur) + ".json")
+                quote_currencies[str(current_cur)] = decimal.Decimal(str(resp_rate["bpi"][str(current_cur)]["rate_float"]))
+            except Exception:
+                return
+        with self.lock:
+            self.quote_currencies = quote_currencies
+        self.parent.set_currencies(quote_currencies)
+
+    def update_ib(self):
+        available_currencies = ["USD", "EUR", "SGD"]
+        quote_currencies = {}
+        for cur in available_currencies:
+            quote_currencies[cur] = 0.0
+        current_cur = self.parent.config.get("currency", "EUR")
+        if current_cur in available_currencies:
+            try:
+                resp_rate = self.get_json('api.itbit.com', "/v1/markets/XBT" + str(current_cur) + "/ticker")
+                quote_currencies[str(current_cur)] = decimal.Decimal(str(resp_rate["lastPrice"]))
+            except Exception:
+                return
         with self.lock:
             self.quote_currencies = quote_currencies
         self.parent.set_currencies(quote_currencies)
 
     def update_wd(self):
         try:
-            winkresp = self.get_json('winkdex.com', "/static/data/0_600_288.json")
-            ####could need nonce value in GET, no Docs available
+            winkresp = self.get_json('winkdex.com', "/api/v0/price")
         except Exception:
             return
         quote_currencies = {"USD": 0.0}
-        ####get y of highest x in "prices"
-        lenprices = len(winkresp["prices"])
-        usdprice = winkresp["prices"][lenprices-1]["y"]
+        usdprice = decimal.Decimal(str(winkresp["price"]))/decimal.Decimal("100.0")
         try:
-            quote_currencies["USD"] = decimal.Decimal(str(usdprice))
+            quote_currencies["USD"] = usdprice
             with self.lock:
                 self.quote_currencies = quote_currencies
         except KeyError:
@@ -246,7 +266,6 @@ class Exchanger(threading.Thread):
         except KeyError:
             pass
         self.parent.set_currencies(quote_currencies)
-        # print "updating exchange rate", self.quote_currencies["USD"]
 
     def update_lb(self):
         try:
@@ -297,9 +316,6 @@ class Exchanger(threading.Thread):
         self.parent.set_currencies(quote_currencies)
 
 
-    def get_currencies(self):
-        return [] if self.quote_currencies == None else sorted(self.quote_currencies.keys())
-
     def _lookup_rate(self, response, quote_id):
         return decimal.Decimal(str(response[str(quote_id)]["15m"]))
     def _lookup_rate_cb(self, response, quote_id):
@@ -323,22 +339,35 @@ class Plugin(BasePlugin):
         BasePlugin.__init__(self,a,b)
         self.currencies = [self.fiat_unit()]
         self.exchanges = [self.config.get('use_exchange', "Blockchain")]
+        self.exchanger = None
 
-    def init(self):
+    @hook
+    def init_qt(self, gui):
+        self.gui = gui
         self.win = self.gui.main_window
         self.win.connect(self.win, SIGNAL("refresh_currencies()"), self.win.update_status)
         self.btc_rate = Decimal("0.0")
-        # Do price discovery
-        self.exchanger = Exchanger(self)
-        self.exchanger.start()
-        self.gui.exchanger = self.exchanger #
-        self.add_fiat_edit()
+        if self.exchanger is None:
+            # Do price discovery
+            self.exchanger = Exchanger(self)
+            self.exchanger.start()
+            self.gui.exchanger = self.exchanger #
+            self.add_fiat_edit()
+            self.win.update_status()
+
+    def close(self):
+        self.exchanger.stop()
+        self.exchanger = None
+        self.win.tabs.removeTab(1)
+        self.win.tabs.insertTab(1, self.win.create_send_tab(), _('Send'))
+        self.win.update_status()
 
     def set_currencies(self, currency_options):
         self.currencies = sorted(currency_options)
         self.win.emit(SIGNAL("refresh_currencies()"))
         self.win.emit(SIGNAL("refresh_currencies_combo()"))
 
+    @hook
     def get_fiat_balance_text(self, btc_balance, r):
         # return balance as: 1.23 USD
         r[0] = self.create_fiat_balance_text(Decimal(btc_balance) / 100000000)
@@ -350,6 +379,7 @@ class Plugin(BasePlugin):
         if quote:
             r[0] = "%s"%quote
 
+    @hook
     def get_fiat_status_text(self, btc_balance, r2):
         # return status as:   (1.23 USD)    1 BTC~123.45 USD
         text = ""
@@ -377,6 +407,7 @@ class Plugin(BasePlugin):
             quote_text = "%.2f %s" % (quote_balance, quote_currency)
         return quote_text
 
+    @hook
     def load_wallet(self, wallet):
         self.wallet = wallet
         tx_list = {}
@@ -391,20 +422,7 @@ class Plugin(BasePlugin):
         return True
 
 
-    def toggle(self):
-        enabled = BasePlugin.toggle(self)
-        self.win.update_status()
-        self.win.tabs.removeTab(1)
-        new_send_tab = self.gui.main_window.create_send_tab()
-        self.win.tabs.insertTab(1, new_send_tab, _('Send'))
-        if enabled:
-            self.add_fiat_edit()
-        return enabled
-
-
-    def close(self):
-        self.exchanger.stop()
-
+    @hook
     def history_tab_update(self):
         if self.config.get('history_rates', 'unchecked') == "checked":
             cur_exchange = self.config.get('use_exchange', "Blockchain")
@@ -426,7 +444,7 @@ class Plugin(BasePlugin):
                     return
             elif cur_exchange == "Winkdex":
                 try:
-                    resp_hist = self.exchanger.get_json('winkdex.com', "/static/data/0_86400_730.json")['prices']
+                    resp_hist = self.exchanger.get_json('winkdex.com', "/api/v0/series?start_time=1342915200")['series'][0]['results']
                 except Exception:
                     return
             elif cur_exchange == "BitcoinVenezuela":
@@ -467,12 +485,14 @@ class Plugin(BasePlugin):
                     except KeyError:
                         tx_USD_val = "%.2f %s" % (self.btc_rate * Decimal(str(tx_info['value']))/100000000 , "USD")
                 elif cur_exchange == "Winkdex":
-                    tx_time_str = int(tx_time) - (int(tx_time) % (60 * 60 * 24))
+                    tx_time_str = datetime.datetime.fromtimestamp(tx_time).strftime('%Y-%m-%d') + "T16:00:00-04:00"
                     try:
-                        tx_rate = resp_hist[[x['x'] for x in resp_hist].index(tx_time_str)]['y']
-                        tx_USD_val = "%.2f %s" % (Decimal(tx_info['value']) / 100000000 * Decimal(tx_rate), "USD")
+                        tx_rate = resp_hist[[x['timestamp'] for x in resp_hist].index(tx_time_str)]['price']
+                        tx_USD_val = "%.2f %s" % (Decimal(tx_info['value']) / 100000000 * Decimal(tx_rate)/Decimal("100.0"), "USD")
                     except ValueError:
                         tx_USD_val = "%.2f %s" % (self.btc_rate * Decimal(tx_info['value'])/100000000 , "USD")
+                    except KeyError:
+                        tx_USD_val = _("No data")
                 elif cur_exchange == "BitcoinVenezuela":
                     tx_time_str = datetime.datetime.fromtimestamp(tx_time).strftime('%Y-%m-%d')
                     try:
@@ -481,7 +501,7 @@ class Plugin(BasePlugin):
                     except KeyError:
                         tx_BTCVEN_val = _("No data")
 
-                if cur_exchange == "CoinDesk" or cur_exchange == "Winkdex":
+                if cur_exchange in ["CoinDesk", "Winkdex"]:
                     item.setText(5, tx_USD_val)
                 elif cur_exchange == "BitcoinVenezuela":
                     item.setText(5, tx_BTCVEN_val)
@@ -509,10 +529,7 @@ class Plugin(BasePlugin):
         combo_ex = QComboBox()
         hist_checkbox = QCheckBox()
         hist_checkbox.setEnabled(False)
-        if self.config.get('history_rates', 'unchecked') == 'unchecked':
-            hist_checkbox.setChecked(False)
-        else:
-            hist_checkbox.setChecked(True)
+        hist_checkbox.setChecked(self.config.get('history_rates', 'unchecked') != 'unchecked')
         ok_button = QPushButton(_("OK"))
 
         def on_change(x):
@@ -523,15 +540,10 @@ class Plugin(BasePlugin):
             if cur_request != self.fiat_unit():
                 self.config.set_key('currency', cur_request, True)
                 cur_exchange = self.config.get('use_exchange', "Blockchain")
-                if cur_request == "USD" and (cur_exchange == "CoinDesk" or cur_exchange == "Winkdex"):
-                    hist_checkbox.setEnabled(True)
-                elif cur_request == "VEF" and (cur_exchange == "BitcoinVenezuela"):
-                    hist_checkbox.setEnabled(True)
-                elif cur_request == "ARS" and (cur_exchange == "BitcoinVenezuela"):
+                if (cur_exchange, cur_request) in EXCH_SUPPORT_HIST:
                     hist_checkbox.setEnabled(True)
                 else:
-                    hist_checkbox.setChecked(False)
-                    hist_checkbox.setEnabled(False)
+                    disable_check()
                 self.win.update_status()
                 try:
                     self.fiat_button
@@ -552,16 +564,8 @@ class Plugin(BasePlugin):
                 combo.clear()
                 self.exchanger.query_rates.set()
                 cur_currency = self.fiat_unit()
-                if cur_request == "CoinDesk" or cur_request == "Winkdex":
-                    if cur_currency == "USD":
-                        hist_checkbox.setEnabled(True)
-                    else:
-                        disable_check()
-                elif cur_request == "BitcoinVenezuela":
-                    if cur_currency == "VEF" or cur_currency == "ARS":
-                        hist_checkbox.setEnabled(True)
-                    else:
-                        disable_check()
+                if (cur_request, cur_currency) in EXCH_SUPPORT_HIST:
+                    hist_checkbox.setEnabled(True)
                 else:
                     disable_check()
                 set_currencies(combo)
@@ -580,16 +584,12 @@ class Plugin(BasePlugin):
 
         def set_hist_check(hist_checkbox):
             cur_exchange = self.config.get('use_exchange', "Blockchain")
-            if cur_exchange == "CoinDesk" or cur_exchange == "Winkdex":
-                hist_checkbox.setEnabled(True)
-            elif cur_exchange == "BitcoinVenezuela":
-                hist_checkbox.setEnabled(True)
-            else:
-                hist_checkbox.setEnabled(False)
+            hist_checkbox.setEnabled(cur_exchange in ["CoinDesk", "Winkdex", "BitcoinVenezuela"])
 
         def set_currencies(combo):
-            current_currency = self.fiat_unit()
             try:
+                combo.blockSignals(True)
+                current_currency = self.fiat_unit()
                 combo.clear()
             except Exception:
                 return
@@ -598,6 +598,7 @@ class Plugin(BasePlugin):
                 index = self.currencies.index(current_currency)
             except Exception:
                 index = 0
+            combo.blockSignals(False)
             combo.setCurrentIndex(index)
 
         def set_exchanges(combo_ex):
@@ -613,6 +614,8 @@ class Plugin(BasePlugin):
             combo_ex.setCurrentIndex(index)
 
         def ok_clicked():
+            if self.config.get('use_exchange', "Blockchain") in ["CoinDesk", "itBit"]:
+                self.exchanger.query_rates.set()
             d.accept();
 
         set_exchanges(combo_ex)

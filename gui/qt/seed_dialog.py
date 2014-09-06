@@ -29,6 +29,7 @@ class SeedDialog(QDialog):
     def __init__(self, parent, seed, imported_keys):
         QDialog.__init__(self, parent)
         self.setModal(1)
+        self.setMinimumWidth(400)
         self.setWindowTitle('Electrum' + ' - ' + _('Seed'))
         vbox = show_seed_box(seed)
         if imported_keys:
@@ -87,8 +88,6 @@ def show_seed_box(seed, sid=None):
     grid.addWidget(logo, 0, 0)
     grid.addWidget(label1, 0, 1)
     grid.addWidget(seed_text, 1, 0, 1, 2)
-    #qrw = QRCodeWidget(seed)
-    #grid.addWidget(qrw, 0, 2, 2, 1)
     vbox = QVBoxLayout()
     vbox.addLayout(grid)
     vbox.addWidget(label2)

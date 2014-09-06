@@ -45,6 +45,42 @@ MIN_RELAY_TX_FEE = 1000
 EncodeAES = lambda secret, s: base64.b64encode(aes.encryptData(secret,s))
 DecodeAES = lambda secret, e: aes.decryptData(secret, base64.b64decode(e))
 
+def strip_PKCS7_padding(s):
+    """return s stripped of PKCS7 padding"""
+    if len(s)%16 or not s:
+        raise ValueError("String of len %d can't be PCKS7-padded" % len(s))
+    numpads = ord(s[-1])
+    if numpads > 16:
+        raise ValueError("String ending with %r can't be PCKS7-padded" % s[-1])
+    if s[-numpads:] != numpads*chr(numpads):
+        raise ValueError("Invalid PKCS7 padding")
+    return s[:-numpads]
+
+
+def aes_encrypt_with_iv(key, iv, data):
+    mode = aes.AESModeOfOperation.modeOfOperation["CBC"]
+    key = map(ord, key)
+    iv = map(ord, iv)
+    data = aes.append_PKCS7_padding(data)
+    keysize = len(key)
+    assert keysize in aes.AES.keySize.values(), 'invalid key size: %s' % keysize
+    moo = aes.AESModeOfOperation()
+    (mode, length, ciph) = moo.encrypt(data, mode, key, keysize, iv)
+    return ''.join(map(chr, ciph))
+
+def aes_decrypt_with_iv(key, iv, data):
+    mode = aes.AESModeOfOperation.modeOfOperation["CBC"]
+    key = map(ord, key)
+    iv = map(ord, iv)
+    keysize = len(key)
+    assert keysize in aes.AES.keySize.values(), 'invalid key size: %s' % keysize
+    data = map(ord, data)
+    moo = aes.AESModeOfOperation()
+    decr = moo.decrypt(data, None, mode, key, keysize, iv)
+    decr = strip_PKCS7_padding(decr)
+    return decr
+
+
 
 def pw_encode(s, password):
     if password:
@@ -111,22 +147,14 @@ def Hash(x):
 hash_encode = lambda x: x[::-1].encode('hex')
 hash_decode = lambda x: x.decode('hex')[::-1]
 hmac_sha_512 = lambda x,y: hmac.new(x, y, hashlib.sha512).digest()
-
-
-def mnemonic_to_seed(mnemonic, passphrase):
-    from pbkdf2 import PBKDF2
-    import hmac
-    PBKDF2_ROUNDS = 2048
-    return PBKDF2(mnemonic, 'mnemonic' + passphrase, iterations = PBKDF2_ROUNDS, macmodule = hmac, digestmodule = hashlib.sha512).read(64)
-
-
 is_new_seed = lambda x: hmac_sha_512("Seed version", x.encode('utf8')).encode('hex')[0:2].startswith(SEED_PREFIX)
 
+
 def is_old_seed(seed):
-    import mnemonic
+    import old_mnemonic
     words = seed.strip().split()
     try:
-        mnemonic.mn_decode(words)
+        old_mnemonic.mn_decode(words)
         uses_electrum_words = True
     except Exception:
         uses_electrum_words = False
@@ -518,7 +546,7 @@ class EC_KEY(object):
             raise Exception("Bad signature")
 
 
-    # ecies encryption/decryption methods; aes-256-cbc is used as the cipher; hmac-sha256 is used as the mac
+    # ECIES encryption/decryption methods; AES-128-CBC with PKCS7 is used as the cipher; hmac-sha256 is used as the mac
 
     @classmethod
     def encrypt_message(self, message, pubkey):
@@ -529,16 +557,12 @@ class EC_KEY(object):
 
         ephemeral_exponent = number_to_string(ecdsa.util.randrange(pow(2,256)), generator_secp256k1.order())
         ephemeral = EC_KEY(ephemeral_exponent)
-
-        ecdh_key = (pk * ephemeral.privkey.secret_multiplier).x()
-        ecdh_key = ('%064x' % ecdh_key).decode('hex')
+        ecdh_key = point_to_ser(pk * ephemeral.privkey.secret_multiplier)
         key = hashlib.sha512(ecdh_key).digest()
-        key_e, key_m = key[:32], key[32:]
-
-        iv_ciphertext = aes.encryptData(key_e, message)
-
+        iv, key_e, key_m = key[0:16], key[16:32], key[32:]
+        ciphertext = aes_encrypt_with_iv(key_e, iv, message)
         ephemeral_pubkey = ephemeral.get_public_key(compressed=True).decode('hex')
-        encrypted = 'BIE1' + ephemeral_pubkey + iv_ciphertext
+        encrypted = 'BIE1' + ephemeral_pubkey + ciphertext
         mac = hmac.new(key_m, encrypted, hashlib.sha256).digest()
 
         return base64.b64encode(encrypted + mac)
@@ -553,7 +577,7 @@ class EC_KEY(object):
 
         magic = encrypted[:4]
         ephemeral_pubkey = encrypted[4:37]
-        iv_ciphertext = encrypted[37:-32]
+        ciphertext = encrypted[37:-32]
         mac = encrypted[-32:]
 
         if magic != 'BIE1':
@@ -567,14 +591,13 @@ class EC_KEY(object):
         if not ecdsa.ecdsa.point_is_valid(generator_secp256k1, ephemeral_pubkey.x(), ephemeral_pubkey.y()):
             raise Exception('invalid ciphertext: invalid ephemeral pubkey')
 
-        ecdh_key = (ephemeral_pubkey * self.privkey.secret_multiplier).x()
-        ecdh_key = ('%064x' % ecdh_key).decode('hex')
+        ecdh_key = point_to_ser(ephemeral_pubkey * self.privkey.secret_multiplier)
         key = hashlib.sha512(ecdh_key).digest()
-        key_e, key_m = key[:32], key[32:]
+        iv, key_e, key_m = key[0:16], key[16:32], key[32:]
         if mac != hmac.new(key_m, encrypted[:-32], hashlib.sha256).digest():
             raise Exception('invalid ciphertext: invalid mac')
 
-        return aes.decryptData(key_e, iv_ciphertext)
+        return aes_decrypt_with_iv(key_e, iv, ciphertext)
 
 
 ###################################### BIP32 ##############################
@@ -640,23 +663,50 @@ def _CKD_pub(cK, c, s):
     return cK_n, c_n
 
 
+BITCOIN_HEADER_PRIV = "0488ade4"
+BITCOIN_HEADER_PUB = "0488b21e"
+
+TESTNET_HEADER_PRIV = "04358394"
+TESTNET_HEADER_PUB = "043587cf"
+
+BITCOIN_HEADERS = (BITCOIN_HEADER_PUB, BITCOIN_HEADER_PRIV)
+TESTNET_HEADERS = (TESTNET_HEADER_PUB, TESTNET_HEADER_PRIV)
+
+def _get_headers(testnet):
+    """Returns the correct headers for either testnet or bitcoin, in the form
+    of a 2-tuple, like (public, private)."""
+    if testnet:
+        return TESTNET_HEADERS
+    else:
+        return BITCOIN_HEADERS
+
 
 def deserialize_xkey(xkey):
+
     xkey = DecodeBase58Check(xkey)
     assert len(xkey) == 78
-    assert xkey[0:4].encode('hex') in ["0488ade4", "0488b21e"]
+
+    xkey_header = xkey[0:4].encode('hex')
+    # Determine if the key is a bitcoin key or a testnet key.
+    if xkey_header in TESTNET_HEADERS:
+        head = TESTNET_HEADER_PRIV
+    elif xkey_header in BITCOIN_HEADERS:
+        head = BITCOIN_HEADER_PRIV
+    else:
+        raise Exception("Unknown xkey header: '%s'" % xkey_header)
+
     depth = ord(xkey[4])
     fingerprint = xkey[5:9]
     child_number = xkey[9:13]
     c = xkey[13:13+32]
-    if xkey[0:4].encode('hex') == "0488ade4":
+    if xkey[0:4].encode('hex') == head:
         K_or_k = xkey[13+33:]
     else:
         K_or_k = xkey[13+32:]
     return depth, fingerprint, child_number, c, K_or_k
 
 
-def get_xkey_name(xkey):
+def get_xkey_name(xkey, testnet=True):
     depth, fingerprint, child_number, c, K = deserialize_xkey(xkey)
     n = int(child_number.encode('hex'), 16)
     if n & BIP32_PRIME:
@@ -671,27 +721,28 @@ def get_xkey_name(xkey):
         raise BaseException("xpub depth error")
 
 
-def xpub_from_xprv(xprv):
+def xpub_from_xprv(xprv, testnet=True):
     depth, fingerprint, child_number, c, k = deserialize_xkey(xprv)
     K, cK = get_pubkeys_from_secret(k)
-    xpub = "043587CF".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
+    header_pub, _  = _get_headers(testnet)
+    xpub = header_pub.decode('hex') + chr(depth) + fingerprint + child_number + c + cK
     return EncodeBase58Check(xpub)
 
 
-def bip32_root(seed):
+def bip32_root(seed, testnet=True):
     import hmac
-    seed = seed.decode('hex')
+    header_pub, header_priv = _get_headers(testnet)
     I = hmac.new("Bitcoin seed", seed, hashlib.sha512).digest()
     master_k = I[0:32]
     master_c = I[32:]
     K, cK = get_pubkeys_from_secret(master_k)
-    xprv = ("04358394" + "00" + "00000000" + "00000000").decode("hex") + master_c + chr(0) + master_k
-    xpub = ("043587CF" + "00" + "00000000" + "00000000").decode("hex") + master_c + cK
+    xprv = (header_priv + "00" + "00000000" + "00000000").decode("hex") + master_c + chr(0) + master_k
+    xpub = (header_pub + "00" + "00000000" + "00000000").decode("hex") + master_c + cK
     return EncodeBase58Check(xprv), EncodeBase58Check(xpub)
 
 
-
-def bip32_private_derivation(xprv, branch, sequence):
+def bip32_private_derivation(xprv, branch, sequence, testnet=True):
+    header_pub, header_priv = _get_headers(testnet)
     depth, fingerprint, child_number, c, k = deserialize_xkey(xprv)
     assert sequence.startswith(branch)
     sequence = sequence[len(branch):]
@@ -706,13 +757,13 @@ def bip32_private_derivation(xprv, branch, sequence):
     fingerprint = hash_160(parent_cK)[0:4]
     child_number = ("%08X"%i).decode('hex')
     K, cK = get_pubkeys_from_secret(k)
-    xprv = "04358394".decode('hex') + chr(depth) + fingerprint + child_number + c + chr(0) + k
-    xpub = "043587CF".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
+    xprv = header_priv.decode('hex') + chr(depth) + fingerprint + child_number + c + chr(0) + k
+    xpub = header_pub.decode('hex') + chr(depth) + fingerprint + child_number + c + cK
     return EncodeBase58Check(xprv), EncodeBase58Check(xpub)
 
 
-
-def bip32_public_derivation(xpub, branch, sequence):
+def bip32_public_derivation(xpub, branch, sequence, testnet=True):
+    header_pub, _ = _get_headers(testnet)
     depth, fingerprint, child_number, c, cK = deserialize_xkey(xpub)
     assert sequence.startswith(branch)
     sequence = sequence[len(branch):]
@@ -725,7 +776,7 @@ def bip32_public_derivation(xpub, branch, sequence):
 
     fingerprint = hash_160(parent_cK)[0:4]
     child_number = ("%08X"%i).decode('hex')
-    xpub = "043587CF".decode('hex') + chr(depth) + fingerprint + child_number + c + cK
+    xpub = header_pub.decode('hex') + chr(depth) + fingerprint + child_number + c + cK
     return EncodeBase58Check(xpub)
 
 

@@ -53,6 +53,12 @@ class AmountEdit(MyLineEdit):
             painter.setPen(self.help_palette.brush(QPalette.Disabled, QPalette.Text).color())
             painter.drawText(textRect, Qt.AlignRight | Qt.AlignVCenter, self.base_unit())
 
+    def get_amount(self):
+        try:
+            x = int(str(self.text()))
+        except:
+            return None
+        return x
 
 
 class BTCAmountEdit(AmountEdit):
@@ -63,8 +69,14 @@ class BTCAmountEdit(AmountEdit):
 
     def _base_unit(self):
         p = self.decimal_point()
-        assert p in [5,8]
-        return "BTC" if p == 8 else "mBTC"
+        assert p in [2, 5, 8]
+        if p == 8:
+            return 'BTC'
+        if p == 5:
+            return 'mBTC'
+        if p == 2:
+            return 'bits'
+        raise Exception('Unknown base unit')
 
     def get_amount(self):
         try:
