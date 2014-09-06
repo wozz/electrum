@@ -769,7 +769,7 @@ class Abstract_Wallet(object):
                 lst = list(outputs[i])
                 lst[1] = newaddr
                 outputs[i] = tuple(lst)
-                outputs.insert(i, ['op_return', op_ret, 0])
+                outputs.insert(i, ('op_return', op_ret, 0))
                 stealth_ops.append(i)
         amount = sum( map(lambda x:x[2], outputs) )
         inputs, total, fee = self.choose_tx_inputs( amount, fee, len(outputs), domain, coins )
