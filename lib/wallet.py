@@ -615,7 +615,7 @@ class Abstract_Wallet(object):
         fee = self.fee * int(math.ceil(estimated_size/1000.))
         return fee
 
-    def add_tx_change( self, inputs, outputs, amount, fee, total, change_addr=None):
+    def add_tx_change( self, inputs, outputs, amount, fee, total, change_addr=None, stealth_ops=[]):
         "add change to a transaction"
         change_amount = total - ( amount + fee )
         if change_amount > DUST_THRESHOLD:
@@ -632,6 +632,8 @@ class Abstract_Wallet(object):
 
             # Insert the change output at a random position in the outputs
             posn = random.randint(0, len(outputs))
+            if stealth_ops != []:
+                while (posn - 1) in stealth_ops: posn = random.randint(0, len(outputs)) # OP_RETURN and spend out of stealth MUST be together.
             outputs[posn:posn] = [( 'address', change_addr,  change_amount)]
 
     def get_history(self, address):
@@ -755,19 +757,27 @@ class Abstract_Wallet(object):
         return default_label
 
     def make_unsigned_transaction(self, outputs, fee=None, change_addr=None, domain=None, coins=None ):
-        for type, data, value in outputs:
+        stealth_ops = []
+        for i, [type, data, value] in enumerate(outputs):
             if type == 'op_return':
                 assert len(data) < 41, "string too long"
                 assert value == 0
             if type == 'address':
                 assert is_address(data), "Address " + data + " is invalid!"
+            if is_stealth_address(data):
+                newaddr, op_ret = get_stealth_send(data)
+                lst = list(outputs[i])
+                lst[1] = newaddr
+                outputs[i] = tuple(lst)
+                outputs.insert(i, ('op_return', op_ret, 0))
+                stealth_ops.append(i)
         amount = sum( map(lambda x:x[2], outputs) )
         inputs, total, fee = self.choose_tx_inputs( amount, fee, len(outputs), domain, coins )
         if not inputs:
             raise ValueError("Not enough funds")
         for txin in inputs:
             self.add_input_info(txin)
-        self.add_tx_change(inputs, outputs, amount, fee, total, change_addr)
+        self.add_tx_change(inputs, outputs, amount, fee, total, change_addr, stealth_ops)
         run_hook('make_unsigned_transaction', inputs, outputs)
         return Transaction(inputs, outputs)
 
