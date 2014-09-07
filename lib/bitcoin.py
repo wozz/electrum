@@ -226,9 +226,9 @@ def is_stealth_address(stealth):
     try:
         bytes = DecodeBase58Check(stealth)
         assert bytes != None
-        assert bytes[0] == chr(42)
+        assert bytes[0] == chr(43)
         ver, op, scan, n, spends, m, prefix_len, prefix = parse_stealth(stealth)
-        assert ver == 42 # Bitcoin Main net
+        assert ver == 43 # Bitcoin Testnet
         #assert op == 0 # This option is currently not used. May want to check for it later.
         assert ser_to_point(scan)
         assert n == len(spends)
@@ -554,7 +554,7 @@ def find_stealth_address(scan_pubkey, spend_pubkeys, ephemkey, multisig_m = 0): 
             addr_pubkey.append(point_to_ser(point).encode('hex'))
         from transaction import Transaction
         redeem_script = Transaction.multisig_script(sorted(addr_pubkey), multisig_m)
-        address = hash_160_to_bc_address(hash_160(redeem_script.decode('hex')), 5)
+        address = hash_160_to_bc_address(hash_160(redeem_script.decode('hex')), 196)
     return address
 
 
