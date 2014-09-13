@@ -16,7 +16,7 @@ from amountedit import AmountEdit
 import sys
 import threading
 from electrum.plugins import run_hook
-
+from electrum.mnemonic import prepare_seed
 
 MSG_ENTER_ANYTHING    = _("Please enter a wallet seed, a master public key, a list of Bitcoin addresses, or a list of private keys")
 MSG_SHOW_MPK          = _("This is your master public key")
@@ -110,12 +110,11 @@ class InstallWizard(QDialog):
         return action, wallet_type
 
 
-    def verify_seed(self, seed, sid):
-        r = self.enter_seed_dialog(MSG_VERIFY_SEED, sid)
+    def verify_seed(self, seed, sid, func=None):
+        r = self.enter_seed_dialog(MSG_VERIFY_SEED, sid, func)
         if not r:
             return
-
-        if r != seed:
+        if prepare_seed(r) != prepare_seed(seed):
             QMessageBox.warning(None, _('Error'), _('Incorrect seed'), _('OK'))
             return False
         else:
